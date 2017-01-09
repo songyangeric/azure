@@ -1,5 +1,6 @@
-import sys, os, argparse
-
+import sys, os
+import argparse
+import json
 from azure.common.credentials import UserPassCredentials
 from azure.mgmt.resource import ResourceManagementClient
 from azure.mgmt.storage import StorageManagementClient
@@ -7,17 +8,17 @@ from azure.mgmt.network import NetworkManagementClient
 
 class azure_operations:
     
-    def __init__(self, username, passwd, subscription_id, resource_group, region, storage_account, vmname):
+    def __init__(self, username, passwd, subscription_id):
         self.username = username
         self.passwd = passwd
         self.subscription_id = subscription_id
-        self.resource_group = resource_group
-        self.region = region
-        in_china = False
-        if regin.index('china') != -1:
-            in_china = True
-        self.storage_account = storage_account
-        self.vmname = vmname
+#        self.resource_group = resource_group
+#        self.region = region
+#        in_china = False
+#        if regin.index('china') != -1:
+#            in_china = True
+#        self.storage_account = storage_account
+#        self.vmname = vmname
         # 
          
         # initialize resouce and storage management object
@@ -62,7 +63,16 @@ class azure_operations:
         delete_done.wait()
         if resource_group in self.resource_client.resource_groups.list():
             raise SystemError('Failed to delete resource group %s' % resource_group)
-   
+
+    def list_storage_account(self, resource_group = None):
+        if resource_group is not None:
+            for sa in self.storage_client.storage_accounts.list_by_resource_group(
+                resource_group):
+                print_item(sa)
+        else:
+            for sa in self.storage_client.storage_accounts.list():
+                print_item(sa)
+
     def create_storage_account(self, resource_group, sa_name, region, type = 'Standard_LRS'):
         async_sa_create = self.storage_client.storage_accounts.create(
             resouce_group,
@@ -230,6 +240,12 @@ class azure_operations:
 
     def create_vm(self, vm_reference):
         vm_parameters = self.parse_vm_parameters(nics, vm_reference)
+        public_ssh_key = None
+        with open(vm_reference['ssh_key'], 'r') as pub_ssh_file_fd:
+            public_ssh_key = pub_ssh_file_fd.read()
+        template = None
+        with open(vm_reference['template'], 'r') as template_file_fd:
+            template = json.load(template_file_fd)
         async_vm_create = self.compute_client.virtual_machines.create_or_update(
             vm_reference['rg'], vm_referenc['name'], vm_parameters)
         async_vm_create.wait()
@@ -256,6 +272,8 @@ class azure_operations:
 
 def usage():
     help = '''
+           -u/--username <username> -p/--password <password> -b/--subscription <subscription id>
+
            --- list subcommands ---
            list resouce_group
            list storage_account
@@ -279,7 +297,9 @@ def usage():
            delete vnet -r/--resource_group <resource group name> -n/--name <vnet name>
            delete subnet -r/--resource_group <resource group name> -n/--name <subnet name>
            delete nic -r/--resource_group <resource group name> -n/--name <nic name>
-           
+          
+           ___ start subcommand ---
+           start vm -r/--resource_group <resource group name> -n/--name <vm name>
            --- restart subcommand ---
            restart vm -r/--resource_group <resource group name> -n/--name <vm name> 
            
@@ -301,107 +321,140 @@ def usage():
 def parse_params():
     parser = argparse.ArgumentParser()
     
+    parser.add_argument('-u', '--username', required=True, help='login via this username')
+    parser.add_argument('-p', '--password', required=True, help='login via this password')
+    parser.add_argument('-b', '--subscription', required=True, help='login via this subscription id')
+   
     subparsers = parser.add_subparsers(title='subcommands', description='valid subcommands', help='additional help')
-    
+   
     # list subcommands
     parser_list = subparsers.add_parser('list', description='list specified resources', help='resource_group | storage_account | vm | vnet | subnet | nic')
     list_subparser = parser_list.add_subparsers(title='list',  help='list related resources')
-    #list resource groups
+    # list resource groups
     list_rg = list_subparser.add_parser('resource_group', help='list resource groups')
-    #list storage accounts
+    list_rg.set_defaults(func=list_resource_groups)
+    # list storage accounts
     list_sa = list_subparser.add_parser('storage_account', help='list storage accounts')
-    list_sa.add_argument('resource_group', help='list storage accounts within a resource group')
-    #list vms
+    list_sa.add_argument('-r', '--resource_group', help='list storage accounts within a resource group')
+    list_sa.set_defaults(func=list_storage_accounts)
+    # list vms
     list_vm = list_subparser.add_parser('vm', help='list vms within a resource group')
-    list_vm.add_argument('resource_group', help='list resources wihtin this group')
-    #list vnets
+    list_vm.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
+    list_vm.set_defaults(func=list_virtual_machines)
+    # list vnets
     list_vnet = list_subparser.add_parser('vnet', help='list vnets within a resource group')
-    list_vnet.add_argument('resource_group', help='list resources wihtin this group')
-    #list subnets
+    list_vnet.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
+    list_vnet.set_defaults(func=list_virtual_networks)
+    # list subnets
     list_subnet = list_subparser.add_parser('subnet', help='list subnets within a resource group')
-    list_subnet.add_argument('resource_group', help='list resources wihtin this group')
-    #list nics
+    list_subnet.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
+    list_subnet.set_defaults(func=list_subnetworks)
+    # list nics
     list_nic = list_subparser.add_parser('nic', help='list nics within a resource group')
-    list_nic.add_argument('resource_group', help='list resources wihtin this group')
+    list_nic.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
+    list_nic.set_defaults(func=list_network_interfaces)
     
     # create subcommands
     parser_create = subparsers.add_parser('create', description='create a specified resource', help='resource_group | storage_account | vm | vnet | subnet | nic')
     create_subparser = parser_create.add_subparsers(title='create',  help='create related resources')
-    #create resource group
+    # create resource group
     create_rg = create_subparser.add_parser('resource_group', help='create a resource group')
-    #create storage account
+    create_rg.set_defaults(func=create_resource_group)
+    # create storage account
     create_sa = create_subparser.add_parser('storage_account', help='create a storage account')
     create_sa.add_argument('resource_group', help='create a storage accounts within a resource group')
-    #create vm
+    create_sa.set_defaults(func=create_storage_account)
+    # create vm
     create_vm = create_subparser.add_parser('vm', help='create vms within a resource group')
-    create_vm.add_argument('-r', '--resource_group', help='create a vm wihtin this resource group')
-    create_vm.add_argument('-s', '--storage_account', help='create a vm wiht this storage account')
-    create_vm.add_argument('-l', '--location', help='create a vm in this region')
-    create_vm.add_argument('-c', '--vm_size', help='create a vm with this size')
-    create_vm.add_argument('-n', '--vm_name', help='create a vm with this name')
-    create_vm.add_argument('-t', '--template', help='create a vm with this template')
+    create_vm.add_argument('-r', '--resource_group', required=True, help='create a vm wihtin this resource group')
+    create_vm.add_argument('-s', '--storage_account', required=True, help='create a vm wiht this storage account')
+    create_vm.add_argument('-l', '--location', required=True, help='create a vm in this region')
+    create_vm.add_argument('-c', '--vm_size', required=True, help='create a vm with this size')
+    create_vm.add_argument('-n', '--vm_name', required=True, help='create a vm with this name')
+    create_vm.add_argument('-t', '--template', required=True, help='create a vm with this template')
     create_vm.add_argument('-v', '--vnet', help='create a vm with this vnet')
     create_vm.add_argument('-e', '--subnet', help='create a vm with this subnet')
     create_vm.add_argument('-i', '--nic', help='create a vm with this nic')
-    #create vnet
+    create_vm.set_defaults(func=create_virtual_machine)
+    # create vnet
     create_vnet = create_subparser.add_parser('vnet', help='create vnets within a resource group')
     create_vnet.add_argument('-r', '--resource_group', help='create a vnet wihtin this group')
     create_vnet.add_argument('-n', '--name',  help='create a vnet with this name')
-    #create subnet
+    create_vnet.set_defaults(func=create_virtual_network)
+    # create subnet
     create_subnet = create_subparser.add_parser('subnet', help='create subnets within a resource group')
     create_subnet.add_argument('-r', '--resource_group', help='create a subnet wihtin this group')
     create_subnet.add_argument('-v', '--vnet', help='create a subnet with this vnet')
     create_subnet.add_argument('-n', '--name', help='create a subnet with this name')
-    #create nic
+    create_subnet.set_defaults(func=create_subnetwork)
+    # create nic
     create_nic = create_subparser.add_parser('nic', help='create nics within a resource group')
     create_nic.add_argument('-t', '-subnet', help='create a nic with this subnet')
     create_nic.add_argument('-n', '--name', help='create a nic with this name')
-    
+    create_nic.set_defaults(func=create_network_interface)
+
     # delete subcommands
     parser_delete = subparsers.add_parser('delete', description='delete a specified resource', help='resource_group | storage_account | vm | vnet | subnet | nic')
     delete_subparser = parser_delete.add_subparsers(title='delete',  help='create related resources')
-    #delete resource group
+    # delete resource group
     delete_rg = delete_subparser.add_parser('resource_group', help='delete a resource group')
     delete_rg.add_argument('-r', '--resource_group', help='delete a resource group')
-    #delete storage account
+    delete_rg.set_defaults(func=delete_resource_group)
+    # delete storage account
     delete_sa = delete_subparser.add_parser('storage_account', help='delete a storage account')
     delete_sa.add_argument('-s', '--storage_account', help='delete a storage account')
-    #delete vm
+    delete_sa.set_defaults(func=delete_storage_account)
+    # delete vm
     delete_vm = delete_subparser.add_parser('vm', help='delete vms within a resource group')
     delete_vm.add_argument('-r', '--resource_group', help='delete a vm wihtin this resource group')
     delete_vm.add_argument('-n', '--vm_name', help='delete a vm with this name')
-    #delete vnet
+    delete_vm.set_defaults(func=delete_virtual_machine)
+    # delete vnet
     delete_vnet = delete_subparser.add_parser('vnet', help='delete vnets within a resource group')
     delete_vnet.add_argument('-r', '--resource_group', help='delete a vnet wihtin this group')
     delete_vnet.add_argument('-n', '--name',  help='delete a vnet with this name')
-    #delete subnet
+    delete_vnet.set_defaults(func=delete_virtual_network)
+    # delete subnet
     delete_subnet = delete_subparser.add_parser('subnet', help='delete subnets within a resource group')
     delete_subnet.add_argument('-r', '--resource_group', help='delete a subnet wihtin this group')
     delete_subnet.add_argument('-n', '--name', help='delete a subnet with this name')
-    #delete nic
+    delete_subnet.set_defaults(func=delete_subnetwork)
+    # delete nic
     delete_nic = delete_subparser.add_parser('nic', help='delete nics within a resource group')
     delete_nic.add_argument('-n', '--name', help='delete a nic with this name')
-    
+    delete_nic.set_defaults(func=delete_network_interface)
+
+    # start subcommand
+    parser_start = subparsers.add_parser('start', description='start a specified vm', help='vm')
+    start_subparser = parser_start.add_subparsers(title='start', description='start a specified vm', help='vm')
+    start_vm = start_subparser.add_parser('vm', help='start a vm')
+    start_vm.add_argument('-r', '--resource_group', help='start a vm within this group')
+    start_vm.add_argument('-n', '--name', help='start a vm with this name')
+    start_vm.set_defaults(func=start_virtual_machine) 
+
     # restart subcommand
     parser_restart = subparsers.add_parser('restart', description='restart a specified vm', help='vm')
     restart_subparser = parser_restart.add_subparsers(title='restart', description='restart a specified vm', help='vm')
     restart_vm = restart_subparser.add_parser('vm', help='restart a vm')
     restart_vm.add_argument('-r', '--resource_group', help='restart a vm within this group')
     restart_vm.add_argument('-n', '--name', help='restart a vm with this name')
-    
+    restart_vm.set_defaults(func=restart_virtual_machine)
+
     # stop command
     parser_stop = subparsers.add_parser('stop', description='stop a specified vm', help='vm')
     stop_subparser = parser_stop.add_subparsers(title='stop', description='stop a specified vm', help='vm')
     stop_vm = stop_subparser.add_parser('vm', help='stop a vm')
     stop_vm.add_argument('-r', '--resource_group', help='stop a vm within this group')
     stop_vm.add_argument('-n', '--name', help='stop a vm with this name')
-    
+    stop_vm.set_defaults(func=stop_virtual_machine)
+
     # upgrade command
     parser_upgrade = subparsers.add_parser('upgrade', description='upgrade specified vm', help='vm')
     upgrade_subparser = parser_upgrade.add_subparsers(title='upgrade', description='upgrade a specified vm', help='vm')
     upgrade_vm = upgrade_subparser.add_parser('vm', help='upgrade a vm')
     upgrade_vm.add_argument('-c', '--vm_size', help='upgrade a vm to this size')
-    
+    upgrade_vm.set_defaults(func=upgrade_virtual_machine)
+
     # attach subcommand
     parser_attach = subparsers.add_parser('attach', description='attach disks to a specified vm', help='disk')
     attach_subparser = parser_attach.add_subparsers(title='attach', description='attach a specified disk', help='disk')
@@ -411,7 +464,8 @@ def parse_params():
     attach_disk.add_argument('-c', '--disk_size', help='attach a disk with this size')
     attach_disk.add_argument('-y', '--disk_type', help='attach a disk with this type')
     attach_disk.add_argument('-d', '--disk_name', help='attach a disk with this name')
-    
+    attach_disk.set_defaults(func=attach_disk_to_vm)
+
     # detach subcommand
     parser_detach = subparsers.add_parser('detach', description='detach disks from a specified vm', help='disk')
     detach_subparser = parser_detach.add_subparsers(title='detach', description='detach a specified disk', help='disk')
@@ -419,8 +473,91 @@ def parse_params():
     detach_disk.add_argument('-r', '--resource_group', help='detach a disk to a vm within this group')
     detach_disk.add_argument('-n', '--name', help='detach a disk from a vm with this name')
     detach_disk.add_argument('-d', '--disk_name', help='detach a disk with this name')
-    #
+    detach_disk.set_defaults(func=detach_disk_from_vm)
+
     args = parser.parse_args()
+    args.func(args)
+
+    return args
+
+def list_resource_groups(args):
+    print 'list resource groups'
+
+def list_storage_accounts(args):
+    print 'list storage accounts'
+
+def list_virtual_machines(args):
+    print 'list virtual machine'
+
+def list_virtual_networks(args):
+    print 'list virtual networks'
+
+def list_subnetworks(args):
+    print 'list subnets'
+
+def list_network_interfaces(args):
+    print 'list nics'
+
+def delete_resource_group(args):
+    print 'delete resource group'
+
+def delete_storage_account(args):
+    print 'delete storage account'
+
+def delete_virtual_network(args):
+    print 'delete virtual network'
+
+def delete_subnetwork(args):
+    print 'delete subnet'
+
+def delete_network_interface(args):
+    print 'delete nic'
+
+def delete_virtual_machine(args):
+    print 'delete_virtual_machine'
+
+def create_resource_group(args):
+    print 'create_resource_group'
+
+def create_storage_account(args):
+    print 'create storage_account'
+
+def create_virtual_network(args):
+    print 'create virtual network'
+
+def create_subnetwork(args):
+    print 'create subnet'
+
+def create_network_interface(args):
+    print 'create network interface'
+ 
+def create_virtual_machine(args):
+    print 'create_virtual_machine'
+
+def start_virtual_machine(args):
+    print 'start_virtual_machine'
+
+def stop_virtual_machine(args):
+    print 'stop_virtual_machine'
+
+def restart_virtual_machine(args):
+    print 'restart_virtual_machine'
+
+def upgrade_virtual_machine(args):
+    print 'upgrade virtual machine'
+
+def attach_disk_to_vm(args):
+    print 'attach_disk_to_vm'
+
+def detach_disk_from_vm(args):
+    #azure_ops = azure_operations(args.username, args.password, args.subscription) 
+    print 'detach_disk_from_vm'
+
 
 if __name__ == '__main__':
-    usage()
+    try:
+        args = parse_params()
+    except Exception as e:
+   #     usage()
+        print '{}'.format(e)
+   #azure_ops = azure_operations() 
