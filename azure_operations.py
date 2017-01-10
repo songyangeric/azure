@@ -19,13 +19,13 @@ class azure_operations:
 #            in_china = True
 #        self.storage_account = storage_account
 #        self.vmname = vmname
-        # 
          
         # initialize resouce and storage management object
         try:
-            credentials = UserPassCredentials("songyang@songyangeric.partner.onmschina.cn", "Passw0rd", china = in_china)
+            credentials = UserPassCredentials("songyang@songyangeric.partner.onmschina.cn", "Passw0rd")
         except Exception as e:
-            raise SystemError('Failed to login due to %s' % e)
+            credentials = UserPassCredentials("songyang@songyangeric.partner.onmschina.cn", "Passw0rd", china=True)
+            self.inChina = True
 
         if self.subscription_id is not None:
             self.resource_client = ResourceManagementClient(credentials, subscription_id)
@@ -64,7 +64,7 @@ class azure_operations:
         if resource_group in self.resource_client.resource_groups.list():
             raise SystemError('Failed to delete resource group %s' % resource_group)
 
-    def list_storage_account(self, resource_group = None):
+    def list_storage_accounts(self, resource_group = None):
         if resource_group is not None:
             for sa in self.storage_client.storage_accounts.list_by_resource_group(
                 resource_group):
@@ -156,8 +156,12 @@ class azure_operations:
         )
         virtual_machine = async_vm_update.result()
 
+    def list_virtual_networks(self, resource_group):
+        for vnet in self.network_client.virtual_networks.list():
+            print_item(vnet)
+
     def create_vnet(self, resource_group, region, vnet_name):
-        async_vnet_create = slef.network_client.virtual_networks.create_or_update(
+        async_vnet_create = self.network_client.virtual_networks.create_or_update(
             resource_group,
             vnet_name,
             {
@@ -168,6 +172,17 @@ class azure_operations:
             }
         )
         async_vnet_create.wait()
+
+    def delete_vnet(self, resource_group, vnet):
+        async_vnet_delete = self.network_client.virtual_networks.delete(
+            resource_group,
+            vnet
+        )
+        async_vnet_delete.wait()
+
+    def list_subnetworks(self, resource_group):
+        for subnet in self.network_client.subnets.list():
+            print_item(subnet)
 
     def create_subnet(self, resource_group, vnet_name, subnet_name):
         async_subnet_create = self.network_client.subnets.create_or_update(
@@ -181,6 +196,17 @@ class azure_operations:
         subnet = async_subnet_create.result()
         return subnet
      
+    def delete_subnet(self, resource_group, subnet):
+        async_subnet_delete = self.network_client.subnets.delete(
+            resource_group,
+            subnet
+        )
+        async_subnet_delete.wait()
+
+    def list_network_interfaces(self, resource_group):
+        for nic in self.network_client.network_interfaces.list():
+            print_item(nic)
+
     def create_nic(self, resource_group, region, subnet, nic_name):
         async_nic_create = self.network_client.network_interfaces.create_or_update(
             resource_group,
@@ -197,6 +223,13 @@ class azure_operations:
         )
         nic = async_nic_create.result()
         return nic
+    
+    def delete_nic(self, resource_group, nic):
+        async_nic_delete = self.network_client.network_interfaces.delete(
+            resource_group,
+            nic
+        )
+        async_nic_delete.wait()
 
     def parse_vm_parameters(nics, vm_reference):
         return {
@@ -217,9 +250,9 @@ class azure_operations:
                     'version' : vm_reference['version'],
                 },
                 'os_disk' : {
-                    'name' : vm_reference['name'] + '_osDisk',
-                    'caching' : 'None',
-                    'create_option' : 'fromImage',
+                    'name' : vm_reference['name'] + '_osdisk',
+                    'caching' : 'none',
+                    'create_option' : 'fromimage',
                     'vhd' : {
                         'uri' : 'https://%s.blob.core.windows.net/vhds/%s.vhd' % (
                             vm_reference['sa'],
@@ -240,10 +273,10 @@ class azure_operations:
 
     def create_vm(self, vm_reference):
         vm_parameters = self.parse_vm_parameters(nics, vm_reference)
-        public_ssh_key = None
+        public_ssh_key = none
         with open(vm_reference['ssh_key'], 'r') as pub_ssh_file_fd:
             public_ssh_key = pub_ssh_file_fd.read()
-        template = None
+        template = none
         with open(vm_reference['template'], 'r') as template_file_fd:
             template = json.load(template_file_fd)
         async_vm_create = self.compute_client.virtual_machines.create_or_update(
@@ -263,7 +296,7 @@ class azure_operations:
                         'vhd' : {
                             'uri' : 'http://%s.blob.core.windows.net/vhds/%s.vhd' %(sa, disk_name)
                         },
-                        'create_option' : 'Empty'
+                        'create_option' : 'empty'
                     }]
                 }
             }
@@ -316,14 +349,14 @@ def usage():
            detach disk -r/--resource_group <resource group name> -n/--name <vm name> -d/--disk_name <disk name>
 
            ''' 
-    print 'Usage: python {}\n {}'.format(sys.argv[0], help) 
+    print 'usage: python {}\n {}'.format(sys.argv[0], help) 
 
 def parse_params():
-    parser = argparse.ArgumentParser()
+    parser = argparse.argumentparser()
     
-    parser.add_argument('-u', '--username', required=True, help='login via this username')
-    parser.add_argument('-p', '--password', required=True, help='login via this password')
-    parser.add_argument('-b', '--subscription', required=True, help='login via this subscription id')
+    parser.add_argument('-u', '--username', required=true, help='login via this username')
+    parser.add_argument('-p', '--password', required=true, help='login via this password')
+    parser.add_argument('-b', '--subscription', required=true, help='login via this subscription id')
    
     subparsers = parser.add_subparsers(title='subcommands', description='valid subcommands', help='additional help')
    
@@ -339,19 +372,19 @@ def parse_params():
     list_sa.set_defaults(func=list_storage_accounts)
     # list vms
     list_vm = list_subparser.add_parser('vm', help='list vms within a resource group')
-    list_vm.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
+    list_vm.add_argument('-r', '--resource_group', required=true, help='list resources wihtin this group')
     list_vm.set_defaults(func=list_virtual_machines)
     # list vnets
     list_vnet = list_subparser.add_parser('vnet', help='list vnets within a resource group')
-    list_vnet.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
+    list_vnet.add_argument('-r', '--resource_group', required=true, help='list resources wihtin this group')
     list_vnet.set_defaults(func=list_virtual_networks)
     # list subnets
     list_subnet = list_subparser.add_parser('subnet', help='list subnets within a resource group')
-    list_subnet.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
+    list_subnet.add_argument('-r', '--resource_group', required=true, help='list resources wihtin this group')
     list_subnet.set_defaults(func=list_subnetworks)
     # list nics
     list_nic = list_subparser.add_parser('nic', help='list nics within a resource group')
-    list_nic.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
+    list_nic.add_argument('-r', '--resource_group', required=true, help='list resources wihtin this group')
     list_nic.set_defaults(func=list_network_interfaces)
     
     # create subcommands
@@ -366,12 +399,12 @@ def parse_params():
     create_sa.set_defaults(func=create_storage_account)
     # create vm
     create_vm = create_subparser.add_parser('vm', help='create vms within a resource group')
-    create_vm.add_argument('-r', '--resource_group', required=True, help='create a vm wihtin this resource group')
-    create_vm.add_argument('-s', '--storage_account', required=True, help='create a vm wiht this storage account')
-    create_vm.add_argument('-l', '--location', required=True, help='create a vm in this region')
-    create_vm.add_argument('-c', '--vm_size', required=True, help='create a vm with this size')
-    create_vm.add_argument('-n', '--vm_name', required=True, help='create a vm with this name')
-    create_vm.add_argument('-t', '--template', required=True, help='create a vm with this template')
+    create_vm.add_argument('-r', '--resource_group', required=true, help='create a vm wihtin this resource group')
+    create_vm.add_argument('-s', '--storage_account', required=true, help='create a vm wiht this storage account')
+    create_vm.add_argument('-l', '--location', required=true, help='create a vm in this region')
+    create_vm.add_argument('-c', '--vm_size', required=true, help='create a vm with this size')
+    create_vm.add_argument('-n', '--vm_name', required=true, help='create a vm with this name')
+    create_vm.add_argument('-t', '--template', required=true, help='create a vm with this template')
     create_vm.add_argument('-v', '--vnet', help='create a vm with this vnet')
     create_vm.add_argument('-e', '--subnet', help='create a vm with this subnet')
     create_vm.add_argument('-i', '--nic', help='create a vm with this nic')
@@ -482,76 +515,124 @@ def parse_params():
 
 def list_resource_groups(args):
     print 'list resource groups'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.list_resource_groups()
 
 def list_storage_accounts(args):
     print 'list storage accounts'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.list_storage_accounts(args.resource_group)
 
 def list_virtual_machines(args):
     print 'list virtual machine'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.list_virtual_machines(args.resource_group)
 
 def list_virtual_networks(args):
     print 'list virtual networks'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.list_virtual_networks(args.resource_group)
 
 def list_subnetworks(args):
     print 'list subnets'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.list_subnetworks(args.resource_group)
 
 def list_network_interfaces(args):
     print 'list nics'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.list_network_interfaces(args.resource_group)
 
 def delete_resource_group(args):
     print 'delete resource group'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.delete_resource_group(args.resource_group)
 
 def delete_storage_account(args):
     print 'delete storage account'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.delete_storage_account(args.resource_group, args.stoarge_account)
 
 def delete_virtual_network(args):
     print 'delete virtual network'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.delete_vnet(args.resource_group, args.vnet)
 
 def delete_subnetwork(args):
     print 'delete subnet'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.delete_subnet(args.resource_group, args.subnet)
 
 def delete_network_interface(args):
     print 'delete nic'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.delete_nic(args.resource_group, args.nic)
 
 def delete_virtual_machine(args):
     print 'delete_virtual_machine'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.delete_vm(args.resource_group, args.name)
 
 def create_resource_group(args):
     print 'create_resource_group'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.create_resource_group(args.resource_group)
 
 def create_storage_account(args):
     print 'create storage_account'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.create_storage_account(args.resource_group, args.storage_account)
 
 def create_virtual_network(args):
     print 'create virtual network'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.create_vnet(args.resource_group, args.vnet)
 
 def create_subnetwork(args):
     print 'create subnet'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.create_vnet(args.resource_group, args.vnet, args.subnet)
 
 def create_network_interface(args):
     print 'create network interface'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.create_nic(args.resource_group, args.region, args.subnet, args.nic)
  
 def create_virtual_machine(args):
     print 'create_virtual_machine'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.create_vm(args.resource_group, args.region, args.vm_size, args.nic)
 
 def start_virtual_machine(args):
     print 'start_virtual_machine'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.start_vm(args.resource_group, args.name)
 
 def stop_virtual_machine(args):
     print 'stop_virtual_machine'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.deallocate_vm(args.resource_group, args.name)
 
 def restart_virtual_machine(args):
     print 'restart_virtual_machine'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.restart_vm(args.resource_group, args.name)
 
 def upgrade_virtual_machine(args):
     print 'upgrade virtual machine'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.upgrade_vm(args.resource_group, args.name, args.vm_size)
 
 def attach_disk_to_vm(args):
     print 'attach_disk_to_vm'
+    azure_ops = azure_operations(args.username, args.password, args.subscription)
+    azure_ops.attach_data_disk(args.resource_group, args.region, args.name, args.disk_name, args.disk_size)
 
 def detach_disk_from_vm(args):
-    #azure_ops = azure_operations(args.username, args.password, args.subscription) 
     print 'detach_disk_from_vm'
+    azure_ops = azure_operations(args.username, args.password, args.subscription) 
+    azure_ops.detach_data_disk(args.resource_group, args.name, args.disk_name)
+
 
 
 if __name__ == '__main__':
