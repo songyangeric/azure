@@ -5,6 +5,7 @@ from azure.common.credentials import UserPassCredentials
 from azure.mgmt.resource import ResourceManagementClient
 from azure.mgmt.storage import StorageManagementClient
 from azure.mgmt.network import NetworkManagementClient
+from azure.mgmt.compute import ComputekManagementClient
 
 class azure_operations:
     
@@ -282,6 +283,18 @@ class azure_operations:
         async_vm_create = self.compute_client.virtual_machines.create_or_update(
             vm_reference['rg'], vm_referenc['name'], vm_parameters)
         async_vm_create.wait()
+
+    def upgrade_vm(self, resource_group, vmname, vm_size):
+        async_vm_update = self.comput_client.virtual_machines.create_or_update(
+            resource_group,
+            vmname,
+            {
+                'hardware_profile' : {
+                    'vm_size' : vm_size
+                },
+            }
+        )
+        async_vm_update.wait()
 
     def attach_data_disk(self, resource_group, region, vmname, disk_name, disk_size):
         async_vm_update = self.compute_client.virtual_machines.create_or_update(
