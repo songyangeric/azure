@@ -6,6 +6,8 @@ from azure.mgmt.resource.resources import ResourceManagementClient
 from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.network import NetworkManagementClient
 from azure.mgmt.storage import StorageManagementClient
+from azure.mgmt.compute.models import DataDisk
+from azure.mgmt.compute.models import VirtualHardDisk
 
 class azure_operations:
     
@@ -115,11 +117,11 @@ class azure_operations:
         state = vm.instance_view.statuses[1].display_status
         return state
 
-    def get_vm(self, resource_group, vmname):
+    def get_vm(self, resource_group, vmname, expand = 'instanceview'):
         virtual_machine = self.compute_client.virtual_machines.get(
             resource_group,
             vmname,
-            expand = 'instanceview'
+            expand  
         )    
         if virtual_machine is None:
             print 'No virtual machine named %s found.' % vmname
@@ -173,7 +175,7 @@ class azure_operations:
             return
         data_disks = virtual_machine.storage_profile.data_disks
         data_disks[:] = [disk for disk in data_disks if disk.name != disk_name]
-        async_vm_update = compute_client.virtual_machines.create_or_update(
+        async_vm_update = self.compute_client.virtual_machines.create_or_update(
             resource_group,
             vmname,
             virtual_machine
@@ -326,16 +328,34 @@ class azure_operations:
             },
         }
 
-    def create_vm(self, vm_reference):
-        vm_parameters = self.parse_vm_parameters(nics, vm_reference)
+    def create_vm(self, resource_group, storage_account, location, vm_size, template_file, vmname, ssh_key_file = None):
         public_ssh_key = none
-        with open(vm_reference['ssh_key'], 'r') as pub_ssh_file_fd:
+        with open(ssh_key_file, 'r') as pub_ssh_file_fd:
             public_ssh_key = pub_ssh_file_fd.read()
         template = none
-        with open(vm_reference['template'], 'r') as template_file_fd:
+        with open(template_file, 'r') as template_file_fd:
             template = json.load(template_file_fd)
-        async_vm_create = self.compute_client.virtual_machines.create_or_update(
-            vm_reference['rg'], vm_referenc['name'], vm_parameters)
+
+        parameters = {
+            #'sshKeyData' : public_ssh_key,
+            'vmName' : vmname,
+            'adminUsername' : 'sysadmin',
+            'adminPassword' : 'Asdfgh123!',
+            'vmSize' : vm_size,
+
+        }
+        parameters = {k : {'value': v} for k, v in parameters.items()}
+
+        deployment_properties = {
+            'mode' : DeploymentMode.incremental,
+            'template' : template,
+            'parameters' : parameters
+        }
+        async_vm_create = self.resource_client.deployments.create_or_update(
+            resource_group,
+            storage_account,
+            deployment_properties
+            )
         async_vm_create.wait()
 
     def upgrade_vm(self, resource_group, vmname, vm_size):
@@ -350,22 +370,28 @@ class azure_operations:
         )
         async_vm_update.wait()
 
-    def attach_data_disk(self, resource_group, vmname, disk_name, disk_size):
+    def attach_data_disk(self, resource_group, storage_account, vmname, disk_name, disk_size):
+        container = vmname + '-vhds'
+        if (int(disk_size) < 1):
+            disk_size = 1
+        elif (int(disk_size) > 1023):
+            disk_size = 1023
+
+        vm = self.get_vm(resource_group, vmname)
+        data_disks = vm.storage_profile.data_disks
+        data_disks.append(DataDisk(
+            lun = len(data_disks),
+            name = disk_name, 
+            disk_size_gb = disk_size,
+            vhd = {
+                'uri': 'https://{}.blob.core.windows.net/{}/{}.vhd'.format(storage_account, container, disk_name)
+            },
+            create_option = 'empty'
+        ))
         async_vm_update = self.compute_client.virtual_machines.create_or_update(
             resource_group,
             vmname,
-            {
-                'storage_profile' : {
-                    'data_disks' : [{
-                        'name' : disk_name,
-                        'disk_size_gb' : disk_size,
-                        'vhd' : {
-                            'uri' : 'http://%s.blob.core.windows.net/vhds/%s.vhd' %(sa, disk_name)
-                        },
-                        'create_option' : 'empty'
-                    }]
-                }
-            }
+            vm
         )
         async_vm_update.wait()
 
@@ -414,7 +440,7 @@ def usage():
            upgrade vm -r/--resource_group <resource group name> -n/--name <vm name> -c/--vm_size <vm size>
            
            --- attach subcommand ---
-           attach disk -r/--resource_group <resource group name> -n/--name <vm name> -d/--disk_name <disk name> -b/--disk_size <disk size> -y/--disk_type <disk type>
+           attach disk -r/--resource_group <resource group name> -s/--storage_account <storage account name> -n/--name <vm name> -d/--disk_name <disk name> -g/--disk_size <disk size in GiB> 
 
            --- detach subcommand ---
            detach disk -r/--resource_group <resource group name> -n/--name <vm name> -d/--disk_name <disk name>
@@ -496,11 +522,11 @@ def parse_params():
     create_vm.add_argument('-s', '--storage_account', required=True, help='create a vm wiht this storage account')
     create_vm.add_argument('-l', '--location', required=True, help='create a vm in this region')
     create_vm.add_argument('-c', '--vm_size', required=True, help='create a vm with this size')
-    create_vm.add_argument('-n', '--vm_name', required=True, help='create a vm with this name')
+    create_vm.add_argument('-n', '--name', required=True, help='create a vm with this name')
     create_vm.add_argument('-t', '--template', required=True, help='create a vm with this template')
-    create_vm.add_argument('-v', '--vnet', help='create a vm with this vnet')
-    create_vm.add_argument('-e', '--subnet', help='create a vm with this subnet')
-    create_vm.add_argument('-i', '--nic', help='create a vm with this nic')
+#    create_vm.add_argument('-v', '--vnet', help='create a vm with this vnet')
+#    create_vm.add_argument('-e', '--subnet', help='create a vm with this subnet')
+#    create_vm.add_argument('-i', '--nic', help='create a vm with this nic')
     create_vm.set_defaults(func=create_virtual_machine)
     # create vnet
     create_vnet = create_subparser.add_parser('vnet', help='create vnets within a resource group')
@@ -586,9 +612,9 @@ def parse_params():
     attach_subparser = parser_attach.add_subparsers(title='attach', description='attach a specified disk', help='disk')
     attach_disk = attach_subparser.add_parser('disk', help='attach a disk to a vm')
     attach_disk.add_argument('-r', '--resource_group', help='attach a disk to a vm within this group')
+    attach_disk.add_argument('-s', '--storage_account', help='attach a disk in this storage account')
     attach_disk.add_argument('-n', '--name', help='attach a disk to a vm with this name')
-    attach_disk.add_argument('-c', '--disk_size', help='attach a disk with this size')
-    attach_disk.add_argument('-y', '--disk_type', help='attach a disk with this type')
+    attach_disk.add_argument('-g', '--disk_size', help='attach a disk with this size in GiB')
     attach_disk.add_argument('-d', '--disk_name', help='attach a disk with this name')
     attach_disk.set_defaults(func=attach_disk_to_vm)
 
@@ -712,7 +738,7 @@ def create_network_interface(args):
 def create_virtual_machine(args):
     print 'create_virtual_machine'
     azure_ops = azure_operations(args.client_id, args.key, args.tenant_id, args.subscription)
-    azure_ops.create_vm(args.resource_group, args.region, args.vm_size, args.nic)
+    azure_ops.create_vm(args.resource_group, args.storage_account, args.location, args.vm_size, args.template, args.name, args.ssh_key)
 
 def start_virtual_machine(args):
     print 'start_virtual_machine'
@@ -741,7 +767,7 @@ def list_vm_data_disk(args):
 def attach_disk_to_vm(args):
     print 'attach_disk_to_vm'
     azure_ops = azure_operations(args.client_id, args.key, args.tenant_id, args.subscription)
-    azure_ops.attach_data_disk(args.resource_group, args.name, args.disk_name, args.disk_size)
+    azure_ops.attach_data_disk(args.resource_group, args.storage_account, args.name, args.disk_name, args.disk_size)
 
 def detach_disk_from_vm(args):
     print 'detach_disk_from_vm'
