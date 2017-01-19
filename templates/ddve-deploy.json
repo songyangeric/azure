@@ -1,0 +1,192 @@
+{
+    "$schema": "http://schema.management.azure.com/schemas/2014-04-01-preview/VM_IP.json",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "storageAccountName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the storage account"
+            }
+        },
+        "location": {
+            "type": "string",
+            "metadata": {
+                "description": "Location of the VM"
+            }
+        },
+        "vmName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the VM"
+            }
+        },
+        "vmSize": {
+            "type": "string",
+            "allowedValues": [
+                "Standard_F4",
+                "Standard_F8",
+                "Standard_D2_v2"
+            ],
+            "defaultValue": "Standard_D2_v2",
+            "metadata": {
+                "description": "Size of the VM"
+            }
+        },
+        "virtualNetworkName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the virtual network"
+            }
+        },
+        "subnetName1": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the subnet1"
+            }
+        },
+        "subnetName2": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the subnet2"
+            }
+        },
+        "adminUsername": {
+            "type": "string",
+            "defaultValue": "sysadmin",
+            "metadata": {
+                "description": "user name"
+            }
+        },
+        "adminPassword": {
+            "type": "securestring",
+            "defaultValue": "Sysadmin123!",
+            "metadata": {
+                "description": "password"
+            }
+        }
+    },
+    "variables": {
+        "apiVersion": "2015-06-15",
+        "osDiskName": "[concat(parameters('vmName'), '-', uniquestring(parameters('vmName')), '-root')]",
+        "nvramDiskName": "[concat(parameters('vmName'), '-', uniquestring(parameters('vmName')), '-nvram')]",
+        "vmStorageAccountContainerName": "[concat(parameters('vmName'), '-', uniquestring(parameters('vmName')), '-vhds')]",
+        "vnetID": "[resourceId('Microsoft.Network/virtualNetworks', parameters('virtualNetworkName'))]",
+        "subnet1Ref": "[concat(variables('vnetID'),'/subnets/', parameters('subnetName1'))]",
+        "subnet2Ref": "[concat(variables('vnetID'),'/subnets/', parameters('subnetName2'))]",
+        "nic1Name": "[concat(parameters('vmName'), '-nic1')]",
+        "nic2Name": "[concat(parameters('vmName'), '-nic2')]"
+    },
+    "resources": [
+        {
+            "apiVersion": "2015-06-15",
+            "type": "Microsoft.Network/networkInterfaces",
+            "name": "[variables('nic1Name')]",
+            "location": "[resourceGroup().location]",
+            "tags": {
+                "displayName": "NetworkInterface"
+            },
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "ipconfig1",
+                        "properties": {
+                            "privateIPAllocationMethod": "Dynamic",
+                            "subnet": {
+                                "id": "[variables('subnet1Ref')]"
+                            }
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "apiVersion": "2015-06-15",
+            "type": "Microsoft.Network/networkInterfaces",
+            "name": "[variables('nic2Name')]",
+            "location": "[resourceGroup().location]",
+            "tags": {
+                "displayName": "NetworkInterface"
+            },
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "ipconfig2",
+                        "properties": {
+                            "privateIPAllocationMethod": "Dynamic",
+                            "subnet": {
+                                "id": "[variables('subnet2Ref')]"
+                            }
+                        }
+                    }
+                ]
+            }
+        },
+        { 
+            "apiVersion": "2015-06-15",
+            "type": "Microsoft.Compute/virtualMachines",
+            "name": "[parameters('vmName')]", 
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/networkInterfaces/', variables('nic1Name'))]",
+                "[concat('Microsoft.Network/networkInterfaces/', variables('nic2Name'))]"
+            ],
+            "properties": {
+                "hardwareProfile": {
+                    "vmSize": "[parameters('vmSize')]"
+                },
+                "storageProfile": {
+                    "osDisk": {
+                        "osType": "Linux",
+                        "name": "[variables('osDiskName')]",
+                        "createOption": "FromImage",
+                        "image": {
+                            "uri": "https://songetest.blob.core.windows.net/system/Microsoft.Compute/Images/ddve-templates/ddve-template-osDisk.87e71aae-2e58-4b07-9789-6fdcb01cd700.vhd"
+                        },
+                        "vhd": {
+                            "uri": "[concat('https://', parameters('storageAccountName'), '.blob.core.windows.net/', variables('vmStorageAccountContainerName'), '/', variables('osDiskName'), '.vhd')]"
+                        },
+                        "caching": "ReadWrite"
+                    },
+                    "dataDisks": [
+                        {
+                            "lun": 0,
+                            "name": "[variables('nvramDiskName')]",
+                            "createOption": "FromImage",
+                            "image": {
+                                "uri": "https://songetest.blob.core.windows.net/system/Microsoft.Compute/Images/ddve-templates/ddve-template-dataDisk-0.87e71aae-2e58-4b07-9789-6fdcb01cd700.vhd"
+                            },
+                            "vhd": {
+                                "uri": "[concat('https://', parameters('storageAccountName'), '.blob.core.windows.net/', variables('vmStorageAccountContainerName'), '/', variables('nvramDiskName'), '.vhd')]"
+                            },
+                            "caching": "None"
+                        }
+                    ]
+                },
+                "osProfile": {
+                    "computerName": "[parameters('vmName')]",
+                    "adminUsername": "[parameters('adminUsername')]",
+                    "adminPassword": "[parameters('adminPassword')]"
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('nic1Name'))]",
+                            "properties": { "primary": true }
+                        },
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('nic2Name'))]",
+                            "properties": { "primary":  false }
+                        }
+                    ]
+                },
+                "diagnosticsProfile": {
+                    "bootDiagnostics": {
+                        "enabled": "true",
+                        "storageUri": "[concat('http://', parameters('storageAccountName'),'.blob.core.windows.net')]"
+                    }
+                }
+            }
+        }
+    ]
+}
+
