@@ -188,14 +188,14 @@ class azure_operations:
         for vnet in self.network_client.virtual_networks.list():
             self.print_item(vnet)
 
-    def create_vnet(self, resource_group, region, vnet_name):
+    def create_vnet(self, resource_group, region, vnet_name, addr_prefix = "10.0.0.0/16"):
         async_vnet_create = self.network_client.virtual_networks.create_or_update(
             resource_group,
             vnet_name,
             {
                 'location' : region,
                 'address_space' : {
-                    'address_prefixes' : ['10.0.0.0/16']
+                    'address_prefixes' : [addr_prefix]
                 }
             }
         )
@@ -209,7 +209,7 @@ class azure_operations:
         async_vnet_delete.wait()
 
     def list_subnetworks(self, resource_group):
-        for subnet in self.network_client.subnets.list():
+        for subnet in self.network_client.subnets.list(resource_group):
             self.print_item(subnet)
 
     def create_subnet(self, resource_group, vnet_name, subnet_name, addr_prefix = "10.0.0.0/24"):
@@ -218,11 +218,10 @@ class azure_operations:
             vnet_name,
             subnet_name,
             {
-                'address_prefix' : '10.0.0.0/24'
+                'address_prefix' : addr_prefix 
             }
         )
         subnet = async_subnet_create.result()
-        return subnet
      
     def delete_subnet(self, resource_group, subnet):
         async_subnet_delete = self.network_client.subnets.delete(
@@ -266,22 +265,25 @@ class azure_operations:
 
         return private_ips
 
-    def create_nic(self, resource_group, region, subnet, nic_name):
+    def create_nic(self, resource_group, vnet, subnet, region, nic_name):
+        subnet_ref = self.network_client.subnets.get(resource_group, vnet, subnet)
+        if subnet_ref is None:
+            raise ValueError("The specified subnet do not exist.")
+
         async_nic_create = self.network_client.network_interfaces.create_or_update(
             resource_group,
             nic_name,
             {
                 'location' : region,
-                'ip_configureation' : [{
+                'ip_configurations' : [{
                     'name' : nic_name,
                     'subnet' : {
-                        'id' : subnet.id
+                        'id' : subnet_ref.id
                     }
                 }]
             }
         )
         nic = async_nic_create.result()
-        return nic
     
     def delete_nic(self, resource_group, nic):
         async_nic_delete = self.network_client.network_interfaces.delete(
@@ -330,28 +332,29 @@ class azure_operations:
             },
         }
 
-    def create_vm(self, resource_group, storage_account, location, vm_size, template_file, vmname, vnet, subnet, ssh_key_file = None):
+    def create_vm(self, resource_group, storage_account, location, vm_size, template_file, vmname, vnet, subnet_list, ssh_key_file = None):
         public_ssh_key = None
         if ssh_key_file:
             with open(ssh_key_file, 'r') as pub_ssh_file_fd:
                 public_ssh_key = pub_ssh_file_fd.read()
        
         template = None
-        if not os.path.exist(template_file):
+        if not os.path.exists(template_file):
             raise ValueError('Template {} does not exist.'.format(template_file))
         with open(template_file, 'r') as template_file_fd:
             template = json.load(template_file_fd)
 
-        subnets = subnet.split(',')
+        subnets = subnet_list.split(',')
         if len(subnets) != 2:
             raise ValueError('Two subnets are needed to create a vm')
-        existing_subnets = self.network_client.subnets.list()
-        if subnet[0] not in existing_subnets:
+        subnet_ref = self.network_client.subnets.get(resource_group, vnet, subnets[0])
+        if subnet_ref is None:
             raise ValueError('Subnet {} does not exist.'.format(subnet[0]))
-        if subnet[1] not in existing_subnets:
+        subnet_ref = self.network_client.subnets.get(resource_group, vnet, subnets[1])
+        if subnet_ref is None:
             raise ValueError('Subnet {} does not exist.'.format(subnet[1]))
-
-        if vnet not in self.network_client.virtual_networks.list():
+        vnet_ref = self.network_client.virtual_networks.get(resource_group, vnet)
+        if vnet_ref is None:
             raise ValueError('Virtual network {} does not exist.'.format(vnet))
 
         parameters = {
@@ -511,16 +514,22 @@ def parse_params():
     create_vnet = create_subparser.add_parser('vnet', help='create vnets within a resource group')
     create_vnet.add_argument('-r', '--resource_group', help='create a vnet wihtin this group')
     create_vnet.add_argument('-n', '--name',  help='create a vnet with this name')
+    create_vnet.add_argument('-l', '--location', help='create a vnet within this location')
+    create_vnet.add_argument('-p', '--prefix', help='create a vnet with this address prefix')
     create_vnet.set_defaults(func=create_virtual_network)
     # create subnet
     create_subnet = create_subparser.add_parser('subnet', help='create subnets within a resource group')
     create_subnet.add_argument('-r', '--resource_group', help='create a subnet wihtin this group')
     create_subnet.add_argument('-v', '--vnet', help='create a subnet with this vnet')
     create_subnet.add_argument('-n', '--name', help='create a subnet with this name')
+    create_subnet.add_argument('-p', '--prefix', help='create a subnet with this address prefix')
     create_subnet.set_defaults(func=create_subnetwork)
     # create nic
     create_nic = create_subparser.add_parser('nic', help='create nics within a resource group')
-    create_nic.add_argument('-t', '-subnet', help='create a nic with this subnet')
+    create_nic.add_argument('-r', '--resource_group', help='create a nic wihtin this group')
+    create_nic.add_argument('-v', '--vnet', help='create a nic with this vnet')
+    create_nic.add_argument('-t', '--subnet', help='create a nic with this subnet')
+    create_nic.add_argument('-l', '--location', help='create a nic within this location')
     create_nic.add_argument('-n', '--name', help='create a nic with this name')
     create_nic.set_defaults(func=create_network_interface)
 
@@ -703,17 +712,17 @@ def create_storage_account(args):
 def create_virtual_network(args):
     print 'create virtual network'
     azure_ops = azure_operations(args.client_id, args.key, args.tenant_id, args.subscription)
-    azure_ops.create_vnet(args.resource_group, args.vnet)
+    azure_ops.create_vnet(args.resource_group, args.location, args.name, args.prefix)
 
 def create_subnetwork(args):
     print 'create subnet'
     azure_ops = azure_operations(args.client_id, args.key, args.tenant_id, args.subscription)
-    azure_ops.create_vnet(args.resource_group, args.vnet, args.subnet)
+    azure_ops.create_subnet(args.resource_group, args.vnet, args.name, args.prefix)
 
 def create_network_interface(args):
     print 'create network interface'
     azure_ops = azure_operations(args.client_id, args.key, args.tenant_id, args.subscription)
-    azure_ops.create_nic(args.resource_group, args.region, args.subnet, args.nic)
+    azure_ops.create_nic(args.resource_group, args.vnet, args.subnet, args.location, args.name)
  
 def create_virtual_machine(args):
     print 'create_virtual_machine'
