@@ -151,10 +151,8 @@
                         {
                             "lun": 0,
                             "name": "[variables('nvramDiskName')]",
-                            "createOption": "FromImage",
-                            "image": {
-                                "uri": "https://songetest.blob.core.windows.net/system/Microsoft.Compute/Images/ddve-templates/ddve-template-dataDisk-0.87e71aae-2e58-4b07-9789-6fdcb01cd700.vhd"
-                            },
+                            "disk_size_gb": 10,
+                            "createOption": "Empty",
                             "vhd": {
                                 "uri": "[concat('https://', parameters('storageAccountName'), '.blob.core.windows.net/', variables('vmStorageAccountContainerName'), '/', variables('nvramDiskName'), '.vhd')]"
                             },

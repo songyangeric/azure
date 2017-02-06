@@ -98,13 +98,14 @@ class azure_operations:
         async_sa_delete.wait()
 
     def print_vm_info(self, resource_group, vm_obj):
-            print 'VM UUID : {}'.format(vm_obj.vm_id)
-            print 'VM ID : {}'.format(vm_obj.id)
-            print 'VM Name : {}'.format(vm_obj.name)
-            print 'VM Size : {}'.format(vm_obj.hardware_profile.vm_size)
-            print 'VM Status : {}'.format(self.list_vm_state(resource_group, vm_obj.name))
-            print 'VM Pulbic IP: {}'.format(self.list_vm_public_ip(resource_group, vm_obj.name))
-            print 'VM Private IP: {}'.format(self.list_vm_private_ip(resource_group, vm_obj.name))
+        print ''
+        print 'VM UUID : {}'.format(vm_obj.vm_id)
+        print 'VM ID : {}'.format(vm_obj.id)
+        print 'VM Name : {}'.format(vm_obj.name)
+        print 'VM Size : {}'.format(vm_obj.hardware_profile.vm_size)
+        print 'VM Status : {}'.format(self.list_vm_state(resource_group, vm_obj.name))
+        print 'VM Pulbic IP: {}'.format(self.list_vm_public_ip(resource_group, vm_obj.name))
+        print 'VM Private IP: {}'.format(self.list_vm_private_ip(resource_group, vm_obj.name))
 
     def list_virtual_machines(self, resource_group, vmname = None):
         if vmname is None:
@@ -244,6 +245,8 @@ class azure_operations:
         for nic_name in nic_names:
             nic = self.network_client.network_interfaces.get(resource_group, nic_name)
             ip_ref = nic.ip_configurations[0].public_ip_address
+            if ip_ref is None:
+                return None
             ip_group = ip_ref.id.split('/')[4]
             ip_name = ip_ref.id.split('/')[8]
             public_ip = self.network_client.public_ip_addresses.get(ip_group, ip_name)
@@ -383,6 +386,7 @@ class azure_operations:
             )
         async_vm_create.wait()
 
+
     def upgrade_vm(self, resource_group, vmname, vm_size):
         async_vm_update = self.comput_client.virtual_machines.create_or_update(
             resource_group,
@@ -396,8 +400,7 @@ class azure_operations:
         async_vm_update.wait()
 
     def attach_data_disk(self, resource_group, storage_account, vmname, disk_name, disk_size, existing = False):
-        #container = vmname + '-vhds'
-        container = 'vhds'
+        container = vmname + '-vhds'
         if (int(disk_size) < 1):
             disk_size = 1
         elif (int(disk_size) > 1023):
@@ -486,7 +489,6 @@ def parse_params():
     list_disk.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
     list_disk.add_argument('-n', '--name', required=True, help='list a specific vm')
     list_disk.set_defaults(func=list_vm_data_disk)
-
 
     # create subcommands
     parser_create = subparsers.add_parser('create', description='create a specified resource', help='resource_group | storage_account | vm | vnet | subnet | nic')
