@@ -63,6 +63,12 @@
             "metadata": {
                 "description": "password"
             }
+        },
+        "os_uri": {
+            "type": "string",
+            "metadata": {
+                "description": "Uri of the root disk"
+            }
         }
     },
     "variables": {
@@ -140,7 +146,7 @@
                         "name": "[variables('osDiskName')]",
                         "createOption": "FromImage",
                         "image": {
-                            "uri": "https://songetest.blob.core.windows.net/system/Microsoft.Compute/Images/ddve-templates/ddve-template-osDisk.87e71aae-2e58-4b07-9789-6fdcb01cd700.vhd"
+                            "uri": "[parameters('os_uri')]"
                         },
                         "vhd": {
                             "uri": "[concat('https://', parameters('storageAccountName'), '.blob.core.windows.net/', variables('vmStorageAccountContainerName'), '/', variables('osDiskName'), '.vhd')]"
@@ -151,7 +157,7 @@
                         {
                             "lun": 0,
                             "name": "[variables('nvramDiskName')]",
-                            "disk_size_gb": 10,
+                            "diskSizeGB": 10,
                             "createOption": "Empty",
                             "vhd": {
                                 "uri": "[concat('https://', parameters('storageAccountName'), '.blob.core.windows.net/', variables('vmStorageAccountContainerName'), '/', variables('nvramDiskName'), '.vhd')]"
