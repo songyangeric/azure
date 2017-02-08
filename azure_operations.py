@@ -833,6 +833,8 @@ def create_virtual_machine(args):
 def create_public_ip(args):
     azure_ops = azure_operations(args.client_id, args.key, args.tenant_id, args.subscription)
     azure_ops.create_public_ip(args.resource_group, args.name, args.static)
+    public_ip = azure_ops.list_vm_public_ip(args.resource_group, args.name)
+    print 'Pulbic ip : {}'.foramt(public_ip)
 
 def start_virtual_machine(args):
     azure_ops = azure_operations(args.client_id, args.key, args.tenant_id, args.subscription)
