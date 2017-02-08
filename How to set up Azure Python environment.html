@@ -1,0 +1,81 @@
+<!DOCTYPE html><html><head><title>How to set up Azure Python environment</title><meta charset='utf-8'><link href='https://dn-maxiang.qbox.me/res-min/themes/marxico.css' rel='stylesheet'><style></style></head><body><div id='preview-contents' class='note-content'>
+                        
+                    
+
+<p></p>
+
+<h4 id="how-to-set-up-azure-python-environment">How to set up Azure Python environment</h4>
+
+<ol start="1"><li rel="1">Install pip (You may need to use <code>sudo</code> )</li>
+</ol>
+
+<pre class="prettyprint hljs-dark"><code class="hljs vim">curl <span class="hljs-string">"https://bootstrap.pypa.io/get-pip.py"</span> -<span class="hljs-keyword">o</span> <span class="hljs-string">"get-pip.py"</span><br><span class="hljs-keyword">python</span> <span class="hljs-built_in">get</span>-pip.<span class="hljs-keyword">py</span><br></code></pre>
+
+<ol start="2"><li rel="2"><p>Install cryptography (this is suggested although following procedures will do this implicitly)</p>
+
+<ul>
+<li>For Debian and Ubuntu, the following command will ensure that the required dependencies are installed:</li></ul>
+
+<pre class="prettyprint hljs-dark"><code class="hljs q">  sudo apt-<span class="hljs-built_in">get</span> install build-essential libssl-<span class="hljs-built_in">dev</span> libffi-<span class="hljs-built_in">dev</span> python-<span class="hljs-built_in">dev</span><br></code></pre>
+
+<ul>
+<li>For Fedora and RHEL-derivatives, the following command will ensure that the required dependencies are installed:</li></ul>
+
+<pre class="prettyprint hljs-dark"><code class="hljs cmake">  sudo yum <span class="hljs-keyword">install</span> gcc libffi-devel python-devel openssl-devel<br></code></pre>
+
+<p>You should now be able to build and install cryptography with the usual.(You may need to use <code>sudo</code> on Ubuntu)</p>
+
+<pre class="prettyprint hljs-dark"><code class="hljs cmake">  pip <span class="hljs-keyword">install</span> cryptography<br></code></pre></li>
+<li rel="3"><p>Install azure Python SDK</p>
+
+<ul>
+<li><p>Via pip(You may need to use <code>sudo</code> ) <br>
+Use the –pre flag: </p>
+
+<pre class="prettyprint hljs-dark"><code class="hljs sql"> pip <span class="hljs-operator"><span class="hljs-keyword">install</span> <span class="hljs-comment">--pre azure</span></span><br></code></pre>
+
+<p>Specify the version:</p>
+
+<pre class="prettyprint hljs-dark"><code class="hljs cpp"> pip install azure==<span class="hljs-number">2.0</span><span class="hljs-number">.0</span>rc6<br></code></pre>
+
+<p>You can also install only what you exactly need:</p>
+
+<p>Use the –pre flag: </p>
+
+<pre class="prettyprint hljs-dark"><code class="hljs sql"> pip <span class="hljs-operator"><span class="hljs-keyword">install</span> <span class="hljs-comment">--pre azure-mgmt-compute</span></span><br></code></pre>
+
+<p>Specify the version: </p>
+
+<pre class="prettyprint hljs-dark"><code class="hljs cpp">pip install azure-mgmt-compute==<span class="hljs-number">0.30</span><span class="hljs-number">.0</span>rc6<br></code></pre></li>
+<li>Via source codes(You may need to use <code>sudo</code>)</li></ul>
+
+<pre class="prettyprint hljs-dark"><code class="hljs vim">  git clone gi<span class="hljs-variable">t:</span>//github.<span class="hljs-keyword">com</span>/Azure/azure-sdk-<span class="hljs-keyword">for</span>-<span class="hljs-keyword">python</span>.git<br>  <span class="hljs-keyword">cd</span> azure-sdk-<span class="hljs-keyword">for</span>-<span class="hljs-keyword">python</span><br>  <span class="hljs-keyword">python</span> setup.<span class="hljs-keyword">py</span> install<br></code></pre></li>
+<li rel="4"></li>
+</ol>
+
+<h5 id="issues-you-may-encounter">Issues you may encounter:</h5>
+
+<ol><li rel="1"><p>On Ubuntu: <font color="red"><strong>Err <a href="http://security.ubuntu.com/ubuntu/" target="_blank">http://security.ubuntu.com/ubuntu/</a> ** 404  Not Found</strong></font> <br>
+Please update your repo first:</p>
+
+<pre class="prettyprint hljs-dark"><code class="hljs q"> sudo apt-<span class="hljs-built_in">get</span> <span class="hljs-keyword">update</span><br></code></pre></li>
+<li rel="2"><p><font color="red"><strong>ImportError: You need to install ‘msrest’ to use this feature</strong></font> <br>
+ Run command(You may need to use <code>sudo</code>):</p></li>
+</ol>
+
+<pre class="prettyprint hljs-dark"><code class="hljs cmake">   pip <span class="hljs-keyword">install</span> msrest<br></code></pre>
+
+<ol start="3"><li rel="3"><font color="red"><strong>ImportError: You need to install ‘msrestazure’ to use this feature</strong></font> <br>
+Run command(You may need to use <code>sudo</code>):</li>
+</ol>
+
+<pre class="prettyprint hljs-dark"><code class="hljs cmake">   pip <span class="hljs-keyword">install</span> msrestazure<br></code></pre>
+
+<ol start="4"><li rel="4"><font color="red"><strong>‘X509’ object has no attribute ‘_x509’</strong></font> <br>
+Please upgrade your pyopenssl to a newer version. <br>
+Run command(You may need to use <code>sudo</code>):</li>
+</ol>
+
+
+
+<pre class="prettyprint hljs-dark"><code class="hljs cmake">  pip <span class="hljs-keyword">install</span> pyopenssl<br></code></pre></div></body></html>
