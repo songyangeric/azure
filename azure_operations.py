@@ -129,7 +129,7 @@ class azure_operations:
                 self.print_vm_info(resource_group, vm)
         else:
             vm = self.get_vm(resource_group, vmname)
-            self.print_vm_info(resouce_group, vm)
+            self.print_vm_info(resource_group, vm)
 
     def list_vm_state(self, resource_group, vmname):
         vm = self.get_vm(resource_group, vmname)
@@ -752,7 +752,7 @@ def list_storage_accounts(args):
 
 def list_virtual_machines(args):
     azure_ops = azure_operations(args.client_id, args.key, args.tenant_id, args.subscription)
-    azure_ops.list_virtual_machines(args.resource_group)
+    azure_ops.list_virtual_machines(args.resource_group, args.name)
 
 def list_virtual_networks(args):
     azure_ops = azure_operations(args.client_id, args.key, args.tenant_id, args.subscription)
