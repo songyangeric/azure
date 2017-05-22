@@ -75,8 +75,8 @@ class azure_operations:
                     }
                 )
 
-        def delete_resource_group(self, resource_group):
-            delete_done = self.resource_client.resource_groups.delete(resource_group)
+    def delete_resource_group(self, resource_group):
+        delete_done = self.resource_client.resource_groups.delete(resource_group)
         delete_done.wait()
         if resource_group in self.resource_client.resource_groups.list():
             raise SystemError('Failed to delete resource group %s' % resource_group)
@@ -371,21 +371,23 @@ class azure_operations:
                 )
         async_nic_create.wait()
 
-    def delete_nic(self, resource_group, nic):
-        nic_ref = self.network_client.network_interfaces.get(resource_group, nic)
-
-        public_ip = nic_ref.ip_configurations[0].public_ip_address
-        
-        async_nic_delete = self.network_client.network_interfaces.delete(
-                resource_group,
-                nic
-                )
-        async_nic_delete.wait()
-        
-        if public_ip:
-            pub_ip_name = public_ip.id.split('/')[8]
-            async_nic_delete = self.network_client.public_ip_addresses.delete(resource_group, pub_ip_name)
+    def delete_nic(self, resource_group, nic_list):
+        nics = nic_list.split(',')
+        for nic in nics:
+            nic_ref = self.network_client.network_interfaces.get(resource_group, nic)
+    
+            public_ip = nic_ref.ip_configurations[0].public_ip_address
+            
+            async_nic_delete = self.network_client.network_interfaces.delete(
+                    resource_group,
+                    nic
+                    )
             async_nic_delete.wait()
+            
+            if public_ip:
+                pub_ip_name = public_ip.id.split('/')[8]
+                async_nic_delete = self.network_client.public_ip_addresses.delete(resource_group, pub_ip_name)
+                async_nic_delete.wait()
 
 
     def create_public_ip(self, resource_group, vmname, static_ip):
