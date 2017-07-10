@@ -13,9 +13,10 @@ from azure.mgmt.storage.models.storage_account_create_parameters import StorageA
 
 # VM size and capacity mapping
 supported_vm_sizes = {
-    '4T' : 'Standard_D2_v2',
     '8T' : 'Standard_F4',
     '16T' : 'Standard_F8',
+    '32T' : 'Standard_D4_v2',
+    '96T' : 'Standard_D15_v2'
 }
 # storage account types
 account_types = ['Standard_LRS', 'Standard_GRS', 'Standard_RAGRS', 
@@ -89,6 +90,12 @@ class azure_operations:
             for sa in self.storage_client.storage_accounts.list():
                 self.print_item(sa)
 
+    def storage_account_within_resource_group(self, resource_group, storage_account):
+        for sa in self.storage_client.storage_accounts.list_by_resource_group(resource_group):
+            if sa.name == storage_account:
+                return True
+        return False
+
     def create_storage_account(self, resource_group, sa_name, region, account_type):
         if account_type is None:
             account_type = 'Standard_LRS'
@@ -112,6 +119,19 @@ class azure_operations:
             resource_group,
             sa_name
         )
+
+    def list_storage_account_primary_key(self, resource_group, storage_account):
+        storage_account_keys = self.storage_client.storage_accounts.list_keys(resource_group, storage_account)
+        storage_account_keys_map = {v.key_name: v.value for v in storage_account_keys.keys}
+        storage_account_primary_key = storage_account_keys_map['key1']
+
+        return storage_account_primary_key
+
+    def create_storage_container(self, resource_group, storage_account, container):
+        account_key = self.list_storage_account_primary_key(resource_group, storage_account)
+
+        page_blob_service = PageBlobService(account_name = storage_account ,account_key = account_key)
+        create_container = page_blob_service.create_container(container_name = container)
 
     def print_vm_info(self, resource_group, vm_obj):
         print ''
@@ -392,71 +412,206 @@ class azure_operations:
                         },
                 }
 
-    def create_vm(self, resource_group, storage_account, location, vm_size, template_file, vmname, vnet, subnet_list, ssh_key_file = None, os_uri = None):
-        public_ssh_key = None
-        if ssh_key_file:
-            with open(ssh_key_file, 'r') as pub_ssh_file_fd:
-                public_ssh_key = pub_ssh_file_fd.read()
+    def create_vm(self, resource_group, storage_account, vm_size, template_file, vmname, vnet, subnet_list, ssh_public_key = None, publisher = None, offer = None, sku = None, username = None, password = None, public_ip = False, static_public_ip = False):
 
-        template = None
-        if not os.path.exists(template_file):
-            raise ValueError('Template {} does not exist.'.format(template_file))
-        with open(template_file, 'r') as template_file_fd:
-            template = json.load(template_file_fd)
-    
-        #vmname check
+        # template = None
+        # if not os.path.exists(template_file):
+        #     raise ValueError('Template {} does not exist.'.format(template_file))
+        # with open(template_file, 'r') as template_file_fd:
+        #     template = json.load(template_file_fd)
+        
+        rg_ref = self.resource_client.resource_groups.get(resource_group)
+        if rg_ref is None:
+            raise ValueError('The specified resource group {} dose not exist.'.format(resource_group))
+        # determine location
+        location = rg_ref.location
+
+        if not self.storage_account_within_resource_group(resource_group, storage_account):
+            raise ValueError('Storage account {} not in resource group {}.'.format(storage_account, resource_group))
+
+        # vmname check
         if re.search(r'[^-0-9A-Za-z]', vmname) is not None:
             raise ValueError('Illegal vm name. Only digits, letters and - can be used.')
 
-        # subnets check
-        subnets = subnet_list.split(',')
-        if len(subnets) != 2:
-            raise ValueError('Two subnets are needed to create a vm')
-        subnet_ref = self.network_client.subnets.get(resource_group, vnet, subnets[0])
-        if subnet_ref is None:
-            raise ValueError('Subnet {} does not exist.'.format(subnet[0]))
-        subnet_ref = self.network_client.subnets.get(resource_group, vnet, subnets[1])
-        if subnet_ref is None:
-            raise ValueError('Subnet {} does not exist.'.format(subnet[1]))
-        # vnet check
-        vnet_ref = self.network_client.virtual_networks.get(resource_group, vnet)
-        if vnet_ref is None:
-            raise ValueError('Virtual network {} does not exist.'.format(vnet))
+        vm_obj = self.get_vm(resource_group, vmname)
+        if vm_obj:
+            raise ValueError('Illegal vm name. The specified vm already exists.')
 
-        if os_uri is None:
-            raise ValueError('OSDisk does not exist.')
+        if publisher is None:
+            publisher = 'dellemc'
 
+        if offer is None:
+            offer = 'dell-emc-datadomain-virtual-edition'
+
+        if sku is None:
+            raise ValueError('SKU must be specified.')
+
+        # default username
+        if username is None:
+            username = 'sysadmin'
+
+        # authentication check 
+        if password is None and ssh_public_key is None:
+            raise ValueError('Either Password or SSH Public Key must be specified.')
+        
+        # size check
         if supported_vm_sizes.get(vm_size.upper()) is None:
             raise ValueError('Wrong capacity {} provided.'.format(vm_size))
         else:
             vm_size = supported_vm_sizes[vm_size.upper()]
 
-        parameters = {
-            #'sshKeyData' : public_ssh_key,
-            'storageAccountName' : storage_account,
-            'location' : location,
-            'vmSize' : vm_size,
-            'vmName' : vmname,
-            'virtualNetworkName' : vnet,
-            'subnetName1' : subnets[0],
-            'subnetName2' : subnets[1],
-            'adminUsername' : 'sysadmin',
-            'adminPassword' : 'Asdfgh123!',
-            'os_uri' : os_uri
-        }
-        parameters = {k : {'value': v} for k, v in parameters.items()}
+        # vnet check
+        vnet_ref = self.network_client.virtual_networks.get(resource_group, vnet)
+        if vnet_ref is None:
+            raise ValueError('Virtual network {} does not exist.'.format(vnet))
+       
+        # subnets check
+        subnets = subnet_list.split(',')
+        for subnet in subnets:
+            subnet_ref = self.network_client.subnets.get(resource_group, vnet, subnets[0])
+            if subnet_ref is None:
+                raise ValueError('Subnet {} does not exist.'.format(subnet))
+            
+        # create nic
+        nic_num = 1
+        nic_ids = []
+        for subnet in subnets:
+            nic_name = vmname + 'nic-{}'.format(nic_num) 
+            nic_ref = self.create_nic(resource_group, vnet, subnet, location, nic_name)
+            nic_id = nic_ref.id
+            nic_ids.append(nic_id)
+            nic_num += 1
 
-        deployment_properties = {
-            'mode' : DeploymentMode.incremental,
-            'template' : template,
-            'parameters' : parameters
-        }
-        async_vm_create = self.resource_client.deployments.create_or_update(
-                resource_group,
-                vmname,
-                deployment_properties
-        )
+        # create storage container 
+        container = '{}-vhds'.format(storage_account)
+        self.create_storage_container(resource_group, storage_account, container)
+       
+        # template parameters
+        parameters = self.create_vm_parameters(storage_account, container, location, vm_size, vmname, nic_ids, ssh_public_key,
+                         publisher, offer, sku, username, password)
+
+#        parameters = {
+#            # 'sshKeyData' : public_ssh_key,
+#            'storageAccountName' : storage_account,
+#            'location' : location,
+#            'vmSize' : vm_size,
+#            'vmName' : vmname,
+#            'virtualNetworkName' : vnet,
+#            'subnetName1' : subnets[0],
+#            'subnetName2' : subnets[1],
+#            'adminUsername' : 'sysadmin',
+#            'adminPassword' : 'Asdfgh123!',
+#            # 'os_uri' : os_uri
+#        }
+#        parameters = {k : {'value': v} for k, v in parameters.items()}
+#
+#        deployment_properties = {
+#            'mode' : DeploymentMode.incremental,
+#            'template' : template,
+#            'parameters' : parameters
+#        }
+#        async_vm_create = self.resource_client.deployments.create_or_update(
+#                resource_group,
+#                vmname,
+#                deployment_properties
+#        )
+        async_vm_create = self.compute_client.virtual_machines.create_or_update(
+                 resource_group,
+                 vmname,
+                 parameters
+                 )
         async_vm_create.wait()
+
+        if public_ip:
+            if static_public_ip:
+                self.create_public_ip(resource_group, vmname, True)
+            else:
+                self.create_public_ip(resource_group, vmname, False)
+
+    def create_vm_parameters(self, location, vm_size, vmname, nic_ids, ssh_public_key, publisher, offer, sku, username, password):
+        # plan 
+        plan = {
+                'name': sku,
+                'publisher': publisher,
+                'product': offer 
+               }
+
+        # os profile
+        os_profile = {}
+        os_profile['computerName'] = vmname
+        os_profile['adminUsername'] = username
+        if password:
+            os_profile['adminPassword'] = password
+        if ssh_public_key:
+            linux_config = {}
+            key_path = '/home/{}/.ssh/authorized_keys'.format(username)
+            public_keys = [{
+                            'path': key_path,
+                            'keyData': ssh_public_key
+                          }]
+            linux_config['ssh'] = public_keys
+       
+        # storage profile
+        image_ref = {
+                      'publisher': publiser,
+                      'offer': offer,
+                      'sku': sku,
+                      'version': 'latest'
+                    }
+        os_disk_ref = {
+                       'name': 'osDisk'.format(vmname),
+                       'createOption': 'FromeImage',
+                      }
+        data_disk_ref = [{
+                        'name': 'nvramDisk',
+                        'diskSizeGB': '10',
+                        'lun': 0,
+                        'createOption': 'FromeImage',
+                        'vhd': {
+                            'uri': ''
+                            }
+                        }]
+        storage_profile = {
+                         'imageReference': image_ref, 
+                         'osDisk': os_disk_ref, 
+                         'dataDisks': data_disk_ref
+                         }
+
+        # network profile
+        primary_nic = True
+        nic_list = []
+        for nic_id in nic_ids:
+            if primary_nic:
+                nic_ref = {
+                        'id': nic_id,
+                        'properties': {'primary': 'true'}
+                        }
+                primary_nic = False
+            else:
+                nic_ref = {
+                        'id': nic_id,
+                        'properties': {'primary': 'true'}
+                        }
+            nic_list.append(nic_ref)
+        network_profile = {}
+        network_profile['networkInterfaces'] = nic_list
+
+        # dianostic profile
+        
+
+        # build template 
+        template_params = {
+                'location': location,
+                'plan': plan,
+                'properties': {
+                    'hardwareProfile': vm_size,
+                    'osProfile': os_profile,
+                    'storageProfile': storage_profile,
+                    'networkProfile': network_profile
+                    }
+                }
+
+        return template_params
 
     def upgrade_vm(self, resource_group, vmname, vm_size):
         if supported_vm_sizes.get(vm_size.upper()) is None:
@@ -834,7 +989,7 @@ def create_public_ip(args):
     azure_ops = azure_operations(args.client_id, args.key, args.tenant_id, args.subscription)
     azure_ops.create_public_ip(args.resource_group, args.name, args.static)
     public_ip = azure_ops.list_vm_public_ip(args.resource_group, args.name)
-    print 'Pulbic ip : {}'.foramt(public_ip)
+    print 'Pulbic ip : {}'.format(public_ip)
 
 def start_virtual_machine(args):
     azure_ops = azure_operations(args.client_id, args.key, args.tenant_id, args.subscription)
