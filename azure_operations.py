@@ -72,22 +72,20 @@ class azure_operations:
         for resource in self.resource_client.resource_groups.list_resources(resource_group):
             self.print_item(resource)       
 
-    def create_resource_group(self, rg_name, region):
+    def create_resource_group(self, rg_name, location):
         async_create = self.resource_client.resource_groups.create_or_update(
                 rg_name,
                 {
-                    'location' : region
-                    }
-                )
+                    'location' : location
+                }
+             )
 
     def delete_resource_group(self, resource_group):
-        delete_done = self.resource_client.resource_groups.delete(resource_group)
-        delete_done.wait()
-        if resource_group in self.resource_client.resource_groups.list():
-            raise SystemError('Failed to delete resource group %s' % resource_group)
+        delete_rg = self.resource_client.resource_groups.delete(resource_group)
+        delete_rg.wait()
 
     def list_storage_accounts(self, resource_group = None):
-        if resource_group is not None:
+        if resource_groupe:
             for sa in self.storage_client.storage_accounts.list_by_resource_group(resource_group):
                 self.print_item(sa)
         else:
@@ -100,7 +98,7 @@ class azure_operations:
                 return True
         return False
 
-    def create_storage_account(self, resource_group, sa_name, region, account_type):
+    def create_storage_account(self, resource_group, sa_name, location, account_type):
         if account_type is None:
             account_type = 'Standard_LRS'
         elif account_type not in account_types:
@@ -110,19 +108,20 @@ class azure_operations:
         valid_name = self.storage_client.storage_accounts.check_name_availability(sa_name)
         if not valid_name.name_available:
             raise ValueError(valid_name.message)
-        param = StorageAccountCreateParameters(sku = Sku(account_type), kind = 'Storage', location = region)  
+
+        param = StorageAccountCreateParameters(sku = Sku(account_type), kind = 'Storage', location = location)  
         async_sa_create = self.storage_client.storage_accounts.create(
-                resource_group,
-                sa_name,
-                param
-                )
+                              resource_group,
+                              sa_name,
+                              param
+                          )
         async_sa_create.wait()
 
     def delete_storage_account(self, resource_group, sa_name):
         async_sa_delete = self.storage_client.storage_accounts.delete(
-                resource_group,
-                sa_name
-                )
+                              resource_group,
+                              sa_name
+                          )
 
     def list_storage_account_primary_key(self, resource_group, storage_account):
         storage_account_keys = self.storage_client.storage_accounts.list_keys(resource_group, storage_account)
@@ -161,43 +160,44 @@ class azure_operations:
 
     def get_vm(self, resource_group, vmname, expand = 'instanceview'):
         virtual_machine = self.compute_client.virtual_machines.get(
-                resource_group,
-                vmname,
-                expand  
-              )    
+                              resource_group,
+                              vmname,
+                              expand  
+                          )    
         if virtual_machine is None:
             print 'No virtual machine named %s found.' % vmname
         return virtual_machine
 
     def deallocate_vm(self, resource_group, vmname):
         async_vm_deallocate = self.compute_client.virtual_machines.deallocate(
-                resource_group, 
-                vmname
-                )
+                                  resource_group, 
+                                  vmname
+                              )
         async_vm_deallocate.wait()
 
     def start_vm(self, resource_group, vmname):
         async_vm_start = self.compute_client.virtual_machines.start(
-                resource_group,
-                vmname
-                )
+                             resource_group,
+                             vmname
+                         )
         async_vm_start.wait()
 
     def restart_vm(self, resource_group, vmname):
         async_vm_restart = self.compute_client.virtual_machines.restart(
-                resource_group,
-                vmname
-                )
+                               resource_group,
+                               vmname
+                           )
         async_vm_restart.wait()
 
     def stop_vm(self, resource_group, vmname):
         async_vm_stop = self.compute_client.virtual_machines.power_off(
-                resource_group,
-                vmname
-                )
+                             resource_group,
+                             vmname
+                        )
         async_vm_stop.wait()
 
-    def delete_vm(self, resource_group, vmname):
+    # for a full delte, even the data disks will be deleted
+    def delete_vm(self, resource_group, vmname, full_delete = True):
         vm = self.get_vm(resource_group, vmname)
         # Get the list of network interfaces of the VM
         nics = vm.network_profile.network_interfaces
@@ -207,9 +207,9 @@ class azure_operations:
         data_disks = vm.storage_profile.data_disks
 
         async_vm_delete = self.compute_client.virtual_machines.delete(
-                resource_group,
-                vmname
-                )
+                              resource_group,
+                              vmname
+                          )
         async_vm_delete.wait()
 
         for nic in nics:
@@ -222,23 +222,20 @@ class azure_operations:
         os_disk_container = os_disk_uri.split('/')[3]
         os_disk_blob_name = os_disk_uri.split('/')[4]
         os_disk_storage_account_name = os_disk_uri.split('/')[2].split('.')[0]
-        os_disk_storage_account_keys = self.storage_client.storage_accounts.list_keys(resource_group, os_disk_storage_account_name)
-        os_disk_storage_account_keys = {v.key_name: v.value for v in os_disk_storage_account_keys.keys}
-        os_disk_storage_account_key = os_disk_storage_account_keys['key1']
+        os_disk_storage_account_key = self.list_storage_account_primary_key(resource_group, os_disk_storage_account_name)
         
         self.delete_blob(os_disk_storage_account_name, os_disk_storage_account_key, os_disk_container, os_disk_blob_name)
 
         # Delete all the data disks
-        for data_disk in data_disks:
-            data_disk_uri = data_disk.vhd.uri
-            data_disk_container = data_disk_uri.split('/')[3]
-            data_disk_blob_name = data_disk_uri.split('/')[4]
-            data_disk_storage_account_name = data_disk_uri.split('/')[2].split('.')[0]
-            data_disk_storage_account_keys = self.storage_client.storage_accounts.list_keys(resource_group, data_disk_storage_account_name)
-            data_disk_storage_account_keys = {v.key_name: v.value for v in data_disk_storage_account_keys.keys}
-            data_disk_storage_account_key = data_disk_storage_account_keys['key1']
-
-            self.delete_blob(data_disk_storage_account_name, data_disk_storage_account_key, data_disk_container, data_disk_blob_name)
+        if full_delete:
+            for data_disk in data_disks:
+                data_disk_uri = data_disk.vhd.uri
+                data_disk_container = data_disk_uri.split('/')[3]
+                data_disk_blob_name = data_disk_uri.split('/')[4]
+                data_disk_storage_account_name = data_disk_uri.split('/')[2].split('.')[0]
+                data_disk_storage_account_key = self.list_storage_account_primary_key(resource_group, data_disk_storage_account_name)
+    
+                self.delete_blob(data_disk_storage_account_name, data_disk_storage_account_key, data_disk_container, data_disk_blob_name)
  
     def delete_container(self, storage_account, account_key, container):
         page_blob_service = PageBlobService(account_name = storage_account ,account_key = account_key)
@@ -272,34 +269,34 @@ class azure_operations:
         data_disks = virtual_machine.storage_profile.data_disks
         data_disks[:] = [disk for disk in data_disks if disk.name != disk_name]
         async_vm_update = self.compute_client.virtual_machines.create_or_update(
-                resource_group,
-                vmname,
-                virtual_machine
-                )
+                              resource_group,
+                              vmname,
+                              virtual_machine
+                          )
         async_vm_update.wait()
 
     def list_virtual_networks(self, resource_group):
         for vnet in self.network_client.virtual_networks.list(resource_group):
             self.print_item(vnet)
 
-    def create_vnet(self, resource_group, region, vnet_name, addr_prefix = "10.0.0.0/16"):
+    def create_vnet(self, resource_group, location, vnet_name, addr_prefix = "10.0.0.0/16"):
         async_vnet_create = self.network_client.virtual_networks.create_or_update(
-                resource_group,
-                vnet_name,
-                {
-                    'location' : region,
-                    'address_space' : {
-                        'address_prefixes' : [addr_prefix]
-                        }
-                    }
-                )
+                                resource_group,
+                                vnet_name,
+                                {
+                                    'location' : location,
+                                    'address_space' : {
+                                    'address_prefixes' : [addr_prefix]
+                                    }
+                                }
+                            )
         async_vnet_create.wait()
 
     def delete_vnet(self, resource_group, vnet):
         async_vnet_delete = self.network_client.virtual_networks.delete(
-                resource_group,
-                vnet
-                )
+                                resource_group,
+                                vnet
+                            )
         async_vnet_delete.wait()
 
     def list_subnetworks(self, resource_group, vnet):
@@ -310,21 +307,21 @@ class azure_operations:
 
     def create_subnet(self, resource_group, vnet_name, subnet_name, addr_prefix = "10.0.0.0/24"):
         async_subnet_create = self.network_client.subnets.create_or_update(
-                resource_group,
-                vnet_name,
-                subnet_name,
-                {
-                    'address_prefix' : addr_prefix 
-                    }
-                )
+                                  resource_group,
+                                  vnet_name,
+                                  subnet_name,
+                                  {
+                                      'address_prefix' : addr_prefix 
+                                  }
+                              )
         async_subnet_create.wait()
 
     def delete_subnet(self, resource_group, vnet, subnet):
         async_subnet_delete = self.network_client.subnets.delete(
-                resource_group,
-                vnet,
-                subnet
-                )
+                                  resource_group,
+                                  vnet,
+                                  subnet
+                              )
         async_subnet_delete.wait()
 
     def list_network_interfaces(self, resource_group):
@@ -364,24 +361,24 @@ class azure_operations:
 
         return private_ips
 
-    def create_nic(self, resource_group, vnet, subnet, region, nic_name):
+    def create_nic(self, resource_group, vnet, subnet, location, nic_name):
         subnet_ref = self.network_client.subnets.get(resource_group, vnet, subnet)
         if subnet_ref is None:
             raise ValueError("The specified subnet does not exist.")
 
         async_nic_create = self.network_client.network_interfaces.create_or_update(
-                resource_group,
-                nic_name,
-                {
-                    'location' : region,
-                    'ip_configurations' : [{
-                        'name' : nic_name,
-                        'subnet' : {
-                            'id' : subnet_ref.id
-                            }
-                        }]
-                    }
-                )
+                               resource_group,
+                               nic_name,
+                               {
+                                   'location' : location,
+                                   'ip_configurations' : [{
+                                       'name' : nic_name,
+                                       'subnet' : {
+                                           'id' : subnet_ref.id
+                                           }
+                                       }]
+                                   }
+                           )
         async_nic_create.wait()
 
     def delete_nic(self, resource_group, nic_list):
@@ -392,9 +389,9 @@ class azure_operations:
             public_ip = nic_ref.ip_configurations[0].public_ip_address
             
             async_nic_delete = self.network_client.network_interfaces.delete(
-                    resource_group,
-                    nic
-                    )
+                                   resource_group,
+                                   nic
+                               )
             async_nic_delete.wait()
             
             if public_ip:
@@ -419,61 +416,22 @@ class azure_operations:
         # first create a public ip
         public_ip_obj = self.network_client.public_ip_addresses
         async_ip_create = public_ip_obj.create_or_update(
-                resource_group, 
-                nic_name,
-                PublicIPAddress(location = nic.location, public_ip_allocation_method = create_opt)
-                )
+                              resource_group, 
+                              nic_name,
+                              PublicIPAddress(location = nic.location, public_ip_allocation_method = create_opt)
+                          )
         async_ip_create.wait()
         # second bind the public ip to the primary nic
         public_ip_address = public_ip_obj.get(resource_group, nic_name)
         public_ip_id = public_ip_address.id
         nic.ip_configurations[0].public_ip_address = PublicIPAddress(id = public_ip_id)
         async_nic_create = self.network_client.network_interfaces.create_or_update(
-                resource_group,
-                nic_name,
-                nic
-                )
+                               resource_group,
+                               nic_name,
+                               nic
+                           )
         async_nic_create.wait()
 
-    def parse_vm_parameters(nics, vm_reference):
-        return {
-                'location' : vm_reference['loc'],
-                'os_profile' : {
-                    'computer_name' : vm_reference['name'],
-                    'admin_username' : vm_reference['username'],
-                    'admin_password' : vm_reference['password'],
-                    },
-                'hardware' : {
-                    'vm_size' : vm_reference['vm_size'],
-                    },
-                'storage_profile' : {
-                    'image_reference' : {
-                        'publisher' : vm_reference['publisher'],
-                        'offer' : vm_reference['offer'],
-                        'sku' : vm_reference['sku'],
-                        'version' : vm_reference['version'],
-                        },
-                    'os_disk' : {
-                        'name' : vm_reference['name'] + '_osdisk',
-                        'caching' : 'None',
-                        'create_option' : 'fromimage',
-                        'vhd' : {
-                            'uri' : 'https://%s.blob.core.windows.net/vhds/%s.vhd' % (
-                                vm_reference['sa'],
-                                vm_reference['template']
-                                )
-                            }
-                        },
-                    },
-                'network_profile' : {
-                    'network_interfaces' : [{
-                        'id' : nics[0].id
-                        }, 
-                        {
-                            'id' : nics[1].id
-                            }]
-                        },
-                }
 
     def create_vm(self, resource_group, storage_account, vm_size, template_file, vmname, vnet, subnet_list, ssh_public_key = None, publisher = None, offer = None, sku = None, username = None, password = None, public_ip = False, static_public_ip = False):
 
@@ -548,7 +506,7 @@ class azure_operations:
             nic_num += 1
 
         # create storage container 
-        container = '{}-vhds'.format(storage_account)
+        container = '{}-vhds'.format(vmname)
         self.create_storage_container(resource_group, storage_account, container)
        
         # template parameters
@@ -581,10 +539,10 @@ class azure_operations:
 #                deployment_properties
 #        )
         async_vm_create = self.compute_client.virtual_machines.create_or_update(
-                 resource_group,
-                 vmname,
-                 parameters
-                 )
+                              resource_group,
+                              vmname,
+                              parameters
+                          )
 
         async_vm_create.wait()
         
@@ -595,7 +553,7 @@ class azure_operations:
             else:
                 self.create_public_ip(resource_group, vmname, False)
 
-    def create_vm_parameters(self, location, vm_size, vmname, nic_ids, ssh_public_key, publisher, offer, sku, username, password):
+    def create_vm_parameters(self, location, storage_account, container, vm_size, vmname, nic_ids, ssh_public_key, publisher, offer, sku, username, password):
         # plan 
         plan = {
                 'name': sku,
@@ -626,23 +584,26 @@ class azure_operations:
                       'version': 'latest'
                     }
         os_disk_ref = {
-                       'name': 'osDisk'.format(vmname),
+                       'name': 'osDisk',
                        'createOption': 'FromeImage',
+                       'vhd': {
+                                'uri': 'https://{}.blob.core.windows.net/{}/{}-os.vhd'.format(storage_account, container, vmname) 
+                              }
                       }
         data_disk_ref = [{
-                        'name': 'nvramDisk',
-                        'diskSizeGB': '10',
-                        'lun': 0,
-                        'createOption': 'FromeImage',
-                        'vhd': {
-                            'uri': ''
-                            }
+                          'name': 'nvramDisk',
+                          'diskSizeGB': '10',
+                          'lun': 0,
+                          'createOption': 'FromeImage',
+                          'vhd': {
+                                   'uri': 'https://{}.blob.core.windows.net/{}/{}-nvram.vhd'.format(storage_account, container, vmname) 
+                                 }
                         }]
         storage_profile = {
-                         'imageReference': image_ref, 
-                         'osDisk': os_disk_ref, 
-                         'dataDisks': data_disk_ref
-                         }
+                           'imageReference': image_ref, 
+                           'osDisk': os_disk_ref, 
+                           'dataDisks': data_disk_ref
+                          }
 
         # network profile
         primary_nic = True
@@ -650,15 +611,15 @@ class azure_operations:
         for nic_id in nic_ids:
             if primary_nic:
                 nic_ref = {
-                        'id': nic_id,
-                        'properties': {'primary': 'true'}
-                        }
+                            'id': nic_id,
+                            'properties': {'primary': 'true'}
+                          }
                 primary_nic = False
             else:
                 nic_ref = {
-                        'id': nic_id,
-                        'properties': {'primary': 'true'}
-                        }
+                            'id': nic_id,
+                            'properties': {'primary': 'false'}
+                          }
             nic_list.append(nic_ref)
         network_profile = {}
         network_profile['networkInterfaces'] = nic_list
@@ -668,15 +629,15 @@ class azure_operations:
 
         # build template 
         template_params = {
-                'location': location,
-                'plan': plan,
-                'properties': {
-                    'hardwareProfile': vm_size,
-                    'osProfile': os_profile,
-                    'storageProfile': storage_profile,
-                    'networkProfile': network_profile
-                    }
-                }
+                            'location': location,
+                            'plan': plan,
+                            'properties': {
+                                'hardwareProfile': vm_size,
+                                'osProfile': os_profile,
+                                'storageProfile': storage_profile,
+                                'networkProfile': network_profile
+                            }
+                          }
 
         return template_params
 
@@ -725,25 +686,39 @@ class azure_operations:
                 break
 
         data_disks.append(DataDisk(
-            lun = available_lun,
-            name = disk_name, 
-            disk_size_gb = disk_size,
-            vhd = {
-                'uri': disk_uri 
-                },
-            create_option = create_opt
-            )
-            )
-        async_vm_update = self.compute_client.virtual_machines.create_or_update(
-                resource_group,
-                vmname,
-                vm
-                )
+                       lun = available_lun,
+                       name = disk_name, 
+                       disk_size_gb = disk_size,
+                       vhd = {
+                           'uri': disk_uri 
+                           },
+                       create_option = create_opt
+                       )
+                  )
+        async_vm_update = self.compute_client.virtual_machiees.create_or_update(
+                               resource_group,
+                               vmname,
+                               vm
+                          )
         async_vm_update.wait()
 
     def get_vm_state(self, resource_group, vmname):
         vm = self.compute_client.virtual_machines.get_with_instance_view(resource_group, vmname).virtual_machine
-        vm_status = vm.instance_view.statuses[1].display_status
+        vm_status = vm.instance_view.statuses[1].display_state
+
+    class arg_parse():
+        def __init__(self):
+            self.parser = argparse.ArgumentParser()
+            self.subparsers = self.parser.add_subparsers(title='subcommands', description='valid subcommands', help='additional help')
+        
+        def add_credentials(self):
+            self.parser.add_argument('-c', '--client_id', required=True, help='login via this client')
+            self parser.add_argument('-k', '--key', required=True, help='login via this key')
+            self parser.add_argument('-t', '--tenant_id', required=True, help='login via this tenant')
+            self parser.add_argument('-s', '--subscription', required=True, help='login via this subscription id')
+
+        def add_list_list_(self):
+            
 
 def parse_params():
     parser = argparse.ArgumentParser()
