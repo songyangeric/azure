@@ -144,7 +144,7 @@ class azure_operations:
         storage_account_keys = self.storage_client.storage_accounts.list_keys(resource_group, storage_account)
         storage_account_keys_map = {v.key_name: v.value for v in storage_account_keys.keys}
         storage_account_primary_key = storage_account_keys_map['key1']
-
+        
         return storage_account_primary_key
 
     def create_storage_container(self, resource_group, storage_account, container):
@@ -303,7 +303,8 @@ class azure_operations:
     
                 self.delete_blob(data_disk_storage_account_name, data_disk_storage_account_key, data_disk_container, data_disk_blob_name)
  
-    def delete_container(self, storage_account, account_key, container):
+    def delete_container(self, resource_group, storage_account, container):
+        account_key = self.list_storage_account_primary_key(resource_group, storage_account)
         page_blob_service = PageBlobService(account_name = storage_account ,account_key = account_key)
         delete_blob = page_blob_service.delete_container(container_name = container)
 
@@ -562,7 +563,7 @@ class azure_operations:
         # subnets check
         subnets = subnet_list.split(',')
         for subnet in subnets:
-            subnet_ref = self.network_client.subnets.get(resource_group, vnet, subnets[0])
+            subnet_ref = self.network_client.subnets.get(resource_group, vnet, subnet.strip())
             if subnet_ref is None:
                 raise ValueError('Subnet {} does not exist.'.format(subnet))
             
@@ -571,7 +572,7 @@ class azure_operations:
         nic_ids = []
         for subnet in subnets:
             nic_name = vmname + '-nic{}'.format(nic_num) 
-            nic_ref = self.create_nic(resource_group, vnet, subnet, location, nic_name)
+            nic_ref = self.create_nic(resource_group, vnet, subnet.strip(), location, nic_name)
             nic_id = nic_ref.id
             nic_ids.append(nic_id)
             nic_num += 1
@@ -781,8 +782,9 @@ class arg_parse:
         self.add_detach_subcommands()
         
         self.parsed_args = self.parser.parse_args()
-        # parsed_args.func(parsed_args)
+        
         self.azure_ops = azure_operations(self.parsed_args.client_id, self.parsed_args.secret_key, self.parsed_args.tenant_id, self.parsed_args.subscription_id)
+       
         self.parsed_args.func(self.parsed_args)
 
     def add_list_subcommands(self):
@@ -939,7 +941,7 @@ class arg_parse:
         # delete container
         delete_container = delete_subparser.add_parser('container', help='delete container within a storage account')
         delete_container.add_argument('-s', '--storage_account', required=True, help='delete a container within this storage account')
-        delete_container.add_argument('-k', '--account_key', required=True, help='storage account key')
+        delete_container.add_argument('-r', '--resource_group', required=True, help='delete a container within this group')
         delete_container.add_argument('-n', '--name', required=True, help='delete a container with this name')
         delete_container.set_defaults(func=self.delete_storage_container)
         # delete a page blob 
@@ -1047,7 +1049,7 @@ class arg_parse:
         self.azure_ops.delete_nic(args.resource_group, args.name)
     
     def delete_storage_container(self, args):
-        self.azure_ops.delete_container(args.storage_account, args.account_key, args.name)
+        self.azure_ops.delete_container(args.resource_group, args.storage_account, args.name)
     
     def delete_page_blob(self, args):
         self.azure_ops.delete_blob(args.storage_account, args.account_key, args.container, args.name)
@@ -1085,9 +1087,6 @@ class arg_parse:
     
     def stop_virtual_machine(self, args):
         self.azure_ops.deallocate_vm(args.resource_group, args.name)
-    
-    def shutdown_virtual_machine(self, args):
-        self.azure_ops.stop_vm(args.resource_group, args.name)
     
     def restart_virtual_machine(self, args):
         self.azure_ops.restart_vm(args.resource_group, args.name)

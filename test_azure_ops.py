@@ -20,11 +20,12 @@ new_container = "test-container"
 new_vnet = "test_vnet"
 new_vnet_prefix = "10.1.0.0/16"
 new_subnet = "test_subnet"
-new_subnets = [new_subnet, new_subnet]
+new_subnets = '{}, {}'.format(new_subnet, new_subnet) 
 new_subnet_prefix = "10.1.0.0/24"
 new_nic = "test_nic"
 new_data_disk = 'new_data_disk'
 new_data_disk_size = 30
+new_vm_name = "test-vm-create"
 new_vm_size = '8T'
 size_for_resize_op = '16T'
 
@@ -41,7 +42,7 @@ if __name__ == '__main__':
         azure_ops.create_vnet(new_rg, location, new_vnet, new_vnet_prefix)
         azure_ops.create_subnet(new_rg, new_vnet, new_subnet, new_subnet_prefix)
         azure_ops.create_nic(new_rg, new_vnet, new_subnet, location, new_nic)
-       
+      
         azure_ops.create_vm(new_rg, new_sa, new_vm_size, new_vm_name, new_vnet, new_subnets, ssh_public_key, publisher, offer, sku, username, password) 
         azure_ops.create_public_ip(new_rg, new_vm_name, static_ip = True)
         
@@ -64,19 +65,21 @@ if __name__ == '__main__':
         azure_ops.list_vm_public_ip(new_rg, new_vm_name)
         azure_ops.list_data_disks(new_rg, new_vm_name)
         azure_ops.list_vhds(new_rg, new_sa)
-    
+   
         # resize vm 
-        azure_ops.resize_vm(resource_group, new_vm_name, size_for_resize_op)
-        
+        azure_ops.resize_vm(new_rg, new_vm_name, size_for_resize_op)
+       
         # delete commands
-        azure_ops.delete_vm(resource_group, new_vm_name)
-
+        azure_ops.delete_vm(new_rg, new_vm_name)
+ 
+        azure_ops.delete_nic(new_rg, new_nic)
         azure_ops.delete_subnet(new_rg, new_vnet, new_subnet)
         azure_ops.delete_vnet(new_rg, new_vnet)
         
         azure_ops.delete_storage_account(new_rg, new_sa)
+        azure_ops.delete_storage_account(new_rg, new_sa_blob)
 
         azure_ops.delete_resource_group(new_rg)
 
-   except Exception as e:
-       print '{}'.format(e)
+    except Exception as e:
+        print '{}'.format(e)
