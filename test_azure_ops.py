@@ -15,6 +15,7 @@ sku = '16.04.0-LTS'
 new_rg = "test_rg"
 location = "eastus"
 new_sa = "songe1testsa"
+new_sa_blob = "songe1testblobsa"
 new_container = "test-container"
 new_vnet = "test_vnet"
 new_vnet_prefix = "10.1.0.0/16"
@@ -34,7 +35,8 @@ if __name__ == '__main__':
         azure_ops = azure_operations(tenant_id = tenant_id, client_id = client_id, secret_key = secret_key, subscription_id = subscription_id)
         # create commands
         azure_ops.create_resource_group(new_rg, location)
-        azure_ops.create_storage_account(new_rg, new_sa, location, account_type = 'BlobStorage', replication_type = "Standard_LRS", access_tier = 'Hot')
+        azure_ops.create_storage_account(new_rg, new_sa_blob, location, account_type = 'BlobStorage', replication_type = "Standard_LRS", access_tier = 'Hot')
+        azure_ops.create_storage_account(new_rg, new_sa, location, account_type = 'Storage', replication_type = "Standard_LRS", access_tier = 'Hot')
         azure_ops.create_storage_container(new_rg, new_sa, new_container)
         azure_ops.create_vnet(new_rg, location, new_vnet, new_vnet_prefix)
         azure_ops.create_subnet(new_rg, new_vnet, new_subnet, new_subnet_prefix)
@@ -61,6 +63,7 @@ if __name__ == '__main__':
         azure_ops.list_vm_private_ip(new_rg, new_vm_name)
         azure_ops.list_vm_public_ip(new_rg, new_vm_name)
         azure_ops.list_data_disks(new_rg, new_vm_name)
+        azure_ops.list_vhds(new_rg, new_sa)
     
         # resize vm 
         azure_ops.resize_vm(resource_group, new_vm_name, size_for_resize_op)
@@ -75,5 +78,5 @@ if __name__ == '__main__':
 
         azure_ops.delete_resource_group(new_rg)
 
-    except Exception as e:
-        print '{}'.format(e)
+   except Exception as e:
+       print '{}'.format(e)

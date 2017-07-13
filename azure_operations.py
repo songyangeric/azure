@@ -109,8 +109,8 @@ class azure_operations:
             raise ValueError('Invalid account type')
 
         if replication_type is None:
-            account_type = 'Standard_LRS'
-        elif account_type not in account_types:
+            replication_type = 'Standard_LRS'
+        elif replication_type not in replication_types:
             raise ValueError('Invalid replication type.')
         
         if account_type == 'BlobStorage':
@@ -156,7 +156,27 @@ class azure_operations:
         page_blob_service = PageBlobService(account_name = storage_account ,account_key = account_key)
         create_container = page_blob_service.create_container(container_name = container)
 
+    def list_vhd_per_storage_account(self, resource_group, storage_account):
+        account_key = self.list_storage_account_primary_key(resource_group, storage_account)
+
+        page_blob_service = PageBlobService(account_name = storage_account ,account_key = account_key)
+        containers = page_blob_service.list_containers()
+        for container in containers: 
+            page_blobs = page_blob_service.list_blobs(container_name = container.name)
+            for page_blob in page_blobs:
+                if re.search(r'\.vhd', page_blob.name):
+                    print '{}/{}/{}: {}/{}'.format(storage_account, container.name, page_blob.name, page_blob.properties.lease.status, page_blob.properties.lease.state)
+
+    def list_vhds(self, resource_group, storage_account):
+        if storage_account is None:
+            storage_accounts = self.storage_client.storage_accounts.list_by_resource_group(resource_group)
+            for storage_account in storage_accounts:
+                self.list_vhd_per_storage_account(resource_group, storage_account.name)
+        else:
+            self.list_vhd_per_storage_account(resource_group, storage_account)
+
     def print_vm_info(self, resource_group, vm_obj):
+        print ''
         print 'VM UUID : {}'.format(vm_obj.vm_id)
         print 'VM ID : {}'.format(vm_obj.id)
         print 'VM Name : {}'.format(vm_obj.name)
@@ -164,8 +184,8 @@ class azure_operations:
         self.list_vm_state(resource_group, vm_obj.name)
         self.list_vm_public_ip(resource_group, vm_obj.name)
         self.list_vm_private_ip(resource_group, vm_obj.name)
-        os_disk_ref = vm_obj.storage_profile.os_disk.vhd
-        if os_disk_ref:
+        os_disk_ref = vm_obj.storage_profile.os_disk
+        if os_disk_ref.vhd:
             print 'VM OS Disk : '
             print '  {}'.format(os_disk_ref.vhd.uri)
         data_disk_refs = vm_obj.storage_profile.data_disks
@@ -175,10 +195,10 @@ class azure_operations:
                 if data_disk_ref.vhd:
                     print '  {}'.format(data_disk_ref.vhd.uri)
                 print '  lun : {}'.format(data_disk_ref.lun)
-                print '  size : {} GB'.format(data_disk_ref.disk_size_gb) 
+                print '  size : {} GiB'.format(data_disk_ref.disk_size_gb) 
             
 
-    def list_virtual_machines(self, resource_group, vmname = None):
+    def list_virtual_machines(self, resource_group, vmname = None, status = None):
         if vmname is None:
             for vm in self.compute_client.virtual_machines.list(resource_group):
                 self.print_vm_info(resource_group, vm)
@@ -193,7 +213,11 @@ class azure_operations:
         
     def list_vm_state(self, resource_group, vmname):
         vm = self.get_vm(resource_group, vmname)
-        state = vm.instance_view.statuses[1].display_status
+        try:
+            state = vm.instance_view.statuses[1].display_status
+        # VM may not be successfully deployed in below case
+        except Exception: 
+            state = vm.instance_view.statuses[0].display_status
         print 'VM Status : {}'.format(state)
         return state
 
@@ -368,7 +392,16 @@ class azure_operations:
 
     def list_network_interfaces(self, resource_group):
         for nic in self.network_client.network_interfaces.list(resource_group):
-            self.print_item(nic)
+            name = nic.name
+            attached_vm = nic.virtual_machine
+            private_ip_addr = nic.ip_configurations[0].private_ip_address
+            subnet_ref = nic.ip_configurations[0].subnet
+            subnet_group = '{}/{}/{}: '.format(subnet_ref.id.split('/')[8], subnet_ref.id.split('/')[10], name)
+            if attached_vm:
+                private_ip = '{}{} : Attached to VM {}'.format(subnet_group, private_ip_addr, attached_vm.id.split('/')[8])
+            else:
+                private_ip = '{}{} :  Available'.format(subnet_group, private_ip_addr)
+            print private_ip
 
     def list_vm_public_ip(self, resource_group, vmname, nic_names = None):
         if nic_names is None:
@@ -385,7 +418,8 @@ class azure_operations:
             ip_group = ip_ref.id.split('/')[4]
             ip_name = ip_ref.id.split('/')[8]
             public_ip = self.network_client.public_ip_addresses.get(ip_group, ip_name)
-            public_ips.append(public_ip.ip_address)
+            if public_ip.ip_address:
+                public_ips.append(public_ip.ip_address)
         
         print 'VM Public IP : {}'.format(','.join(public_ips))
 
@@ -398,10 +432,13 @@ class azure_operations:
         private_ips = []
         for nic_name in nic_names:
             nic = self.network_client.network_interfaces.get(resource_group, nic_name)
-            private_ip = nic.ip_configurations[0].private_ip_address
+            private_ip_addr = nic.ip_configurations[0].private_ip_address
+            subnet_ref = nic.ip_configurations[0].subnet
+            subnet_group = '{}/{}: '.format(subnet_ref.id.split('/')[8], subnet_ref.id.split('/')[10])
+            private_ip = '{}{}'.format(subnet_group, private_ip_addr)
             private_ips.append(private_ip)
 
-        print 'VM Private IP : {}'.format(','.join(private_ips))
+        print 'VM Private IP :\n {}'.format(','.join(private_ips))
 
     def create_nic(self, resource_group, vnet, subnet, location, nic_name):
         subnet_ref = self.network_client.subnets.get(resource_group, vnet, subnet)
@@ -794,6 +831,11 @@ class arg_parse:
         list_disk.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
         list_disk.add_argument('-n', '--name', required=True, help='list a specific vm')
         list_disk.set_defaults(func=self.list_vm_data_disk)
+        # list vhds within a storage account 
+        list_disk = list_subparser.add_parser('vhd', help="list vhds within a storage account")
+        list_disk.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
+        list_disk.add_argument('-s', '--storage_account', help='list vhds within this storage account')
+        list_disk.set_defaults(func=self.list_vhds)
 
     def add_create_subcommands(self):
         # create subcommands
@@ -1055,6 +1097,9 @@ class arg_parse:
     
     def list_vm_data_disk(self, args):
         self.azure_ops.list_data_disks(args.resource_group, args.name)
+    
+    def list_vhds(self, args):
+        self.azure_ops.list_vhds(args.resource_group, args.storage_account)
     
     def attach_disk_to_vm(self, args):
         self.azure_ops.attach_data_disk(args.resource_group, args.name, args.disk_name, args.disk_size, args.existing)
