@@ -7,6 +7,9 @@ from azure.mgmt.storage import StorageManagementClient
 from azure.mgmt.compute.models import DataDisk
 from azure.mgmt.compute.models import VirtualHardDisk
 from azure.mgmt.resource.resources.models import DeploymentMode
+import azure.mgmt.compute.models
+import azure.mgmt.network.models 
+import azure.mgmt.storage.models
 from azure.mgmt.network.models import PublicIPAddress
 from azure.mgmt.storage.models.sku import Sku
 from azure.mgmt.storage.models.storage_account_create_parameters import StorageAccountCreateParameters
@@ -29,7 +32,6 @@ replication_types = ['Standard_LRS', 'Standard_GRS', 'Standard_RAGRS',
 access_tiers = ['Hot', 'Cool']
 
 class azure_operations:
-
     def __init__(self, client_id, secret_key, tenant_id, subscription_id):
         self.client_id = client_id
         self.secret_key = secret_key
@@ -159,9 +161,22 @@ class azure_operations:
         print 'VM ID : {}'.format(vm_obj.id)
         print 'VM Name : {}'.format(vm_obj.name)
         print 'VM Size : {}'.format(vm_obj.hardware_profile.vm_size)
-        print 'VM Status : {}'.format(self.list_vm_state(resource_group, vm_obj.name))
-        print 'VM Pulbic IP: {}'.format(self.list_vm_public_ip(resource_group, vm_obj.name))
-        print 'VM Private IP: {}'.format(self.list_vm_private_ip(resource_group, vm_obj.name))
+        self.list_vm_state(resource_group, vm_obj.name)
+        self.list_vm_public_ip(resource_group, vm_obj.name)
+        self.list_vm_private_ip(resource_group, vm_obj.name)
+        os_disk_ref = vm_obj.storage_profile.os_disk.vhd
+        if os_disk_ref:
+            print 'VM OS Disk : '
+            print '  {}'.format(os_disk_ref.vhd.uri)
+        data_disk_refs = vm_obj.storage_profile.data_disks
+        if data_disk_refs:
+            print 'VM Data Disk : '
+            for data_disk_ref in data_disk_refs:
+                if data_disk_ref.vhd:
+                    print '  {}'.format(data_disk_ref.vhd.uri)
+                print '  lun : {}'.format(data_disk_ref.lun)
+                print '  size : {} GB'.format(data_disk_ref.disk_size_gb) 
+            
 
     def list_virtual_machines(self, resource_group, vmname = None):
         if vmname is None:
@@ -174,12 +189,12 @@ class azure_operations:
     def list_vm_size(self, resource_group, vmname):
         vm = self.get_vm(resource_group, vmname)
         vm_size = vm.hardware_profile.vm_size
-        print vm_size
+        print 'VM Size : {}'.format(vm_size)
         
     def list_vm_state(self, resource_group, vmname):
         vm = self.get_vm(resource_group, vmname)
         state = vm.instance_view.statuses[1].display_status
-        print state
+        print 'VM Status : {}'.format(state)
         return state
 
     def get_vm(self, resource_group, vmname, expand = 'instanceview'):
@@ -372,8 +387,7 @@ class azure_operations:
             public_ip = self.network_client.public_ip_addresses.get(ip_group, ip_name)
             public_ips.append(public_ip.ip_address)
         
-        print public_ips
-        return public_ips
+        print 'VM Public IP : {}'.format(','.join(public_ips))
 
     def list_vm_private_ip(self, resource_group, vmname, nic_names = None):
         if nic_names is None:
@@ -387,8 +401,7 @@ class azure_operations:
             private_ip = nic.ip_configurations[0].private_ip_address
             private_ips.append(private_ip)
 
-        print private_ips
-        return private_ips
+        print 'VM Private IP : {}'.format(','.join(private_ips))
 
     def create_nic(self, resource_group, vnet, subnet, location, nic_name):
         subnet_ref = self.network_client.subnets.get(resource_group, vnet, subnet)
@@ -406,7 +419,7 @@ class azure_operations:
                                            'id' : subnet_ref.id
                                            }
                                        }]
-                                   }
+                               }
                            )
         return async_nic_create.result()
 
@@ -461,15 +474,7 @@ class azure_operations:
                            )
         async_nic_create.wait()
 
-
     def create_vm(self, resource_group, storage_account, vm_size, vmname, vnet, subnet_list, ssh_public_key = None, publisher = None, offer = None, sku = None, username = None, password = None, public_ip = False, static_public_ip = False):
-
-        # template = None
-        # if not os.path.exists(template_file):
-        #     raise ValueError('Template {} does not exist.'.format(template_file))
-        # with open(template_file, 'r') as template_file_fd:
-        #     template = json.load(template_file_fd)
-        
         rg_ref = self.resource_client.resource_groups.get(resource_group)
         if rg_ref is None:
             raise ValueError('The specified resource group {} dose not exist.'.format(resource_group))
@@ -527,58 +532,42 @@ class azure_operations:
         # create nic
         nic_num = 1
         nic_ids = []
-       # for subnet in subnets:
-       #     nic_name = vmname + '-nic{}'.format(nic_num) 
-       #     nic_ref = self.create_nic(resource_group, vnet, subnet, location, nic_name)
-       #     nic_id = nic_ref.id
-       #     nic_ids.append(nic_id)
-       #     nic_num += 1
+        for subnet in subnets:
+            nic_name = vmname + '-nic{}'.format(nic_num) 
+            nic_ref = self.create_nic(resource_group, vnet, subnet, location, nic_name)
+            nic_id = nic_ref.id
+            nic_ids.append(nic_id)
+            nic_num += 1
         
-        nic_ids = [
-                '/subscriptions/56183da2-b1d8-49cd-9ade-d24b928f7452/resourceGroups/solution-test/providers/Microsoft.Network/networkInterfaces/test-vm-nic1',
-                '/subscriptions/56183da2-b1d8-49cd-9ade-d24b928f7452/resourceGroups/solution-test/providers/Microsoft.Network/networkInterfaces/test-vm-nic2'
-                ]
         # create storage container 
         container = '{}-vhds'.format(vmname)
-        # self.create_storage_container(resource_group, storage_account, container)
+        self.create_storage_container(resource_group, storage_account, container)
        
         # template parameters
-        parameters = self.create_vm_parameters(location = location, storage_account = storage_account, container = container, 
-                         vm_size = vm_size, vmname = vmname, nic_ids = nic_ids, ssh_public_key = ssh_public_key, publisher = publisher,
-                         offer = offer, sku = sku, username = username, password = password)
+        try:
+            parameters = self.create_vm_parameters(location = location, storage_account = storage_account, container = container, vm_size = vm_size, 
+                              vmname = vmname, nic_ids = nic_ids, ssh_public_key = ssh_public_key, 
+                              publisher = publisher, offer = offer, sku = sku,
+                              username = username, password = password, need_plan = True)
+        
+            async_vm_create = self.compute_client.virtual_machines.create_or_update(
+                                  resource_group,
+                                  vmname,
+                                  parameters
+                              )
+            async_vm_create.wait()
+        except Exception:
+            parameters = self.create_vm_parameters(location = location, storage_account = storage_account, container = container, vm_size = vm_size, 
+                              vmname = vmname, nic_ids = nic_ids, ssh_public_key = ssh_public_key, 
+                              publisher = publisher, offer = offer, sku = sku,
+                              username = username, password = password, need_plan = False)
+            async_vm_create = self.compute_client.virtual_machines.create_or_update(
+                                  resource_group,
+                                  vmname,
+                                  parameters
+                              )
+            async_vm_create.wait()
 
-#        parameters = {
-#            # 'sshKeyData' : public_ssh_key,
-#            'storageAccountName' : storage_account,
-#            'location' : location,
-#            'vmSize' : vm_size,
-#            'vmName' : vmname,
-#            'virtualNetworkName' : vnet,
-#            'subnetName1' : subnets[0],
-#            'subnetName2' : subnets[1],
-#            'adminUsername' : 'sysadmin',
-#            'adminPassword' : 'Asdfgh123!',
-#            # 'os_uri' : os_uri
-#        }
-#        parameters = {k : {'value': v} for k, v in parameters.items()}
-#
-#        deployment_properties = {
-#            'mode' : DeploymentMode.incremental,
-#            'template' : template,
-#            'parameters' : parameters
-#        }
-#        async_vm_create = self.resource_client.deployments.create_or_update(
-#                resource_group,
-#                vmname,
-#                deployment_properties
-#        )
-        async_vm_create = self.compute_client.virtual_machines.create_or_update(
-                              resource_group,
-                              vmname,
-                              parameters
-                          )
-
-        async_vm_create.wait()
         
         # add a public ip if needed
         if public_ip:
@@ -587,110 +576,90 @@ class azure_operations:
             else:
                 self.create_public_ip(resource_group, vmname, False)
 
-    def create_vm_parameters(self, location = location, storage_account = storage_account, container = container, vm_size = vm_size, vmname = vmname, nic_ids = nic_ids,
-                             ssh_public_key = ssh_public_key, publisher = publisher, offer = offer, sku = sku, username = username, password = password):
-        # plan 
-        plan = {
-                'name': sku,
-                'publisher': publisher,
-                'product': offer 
-               }
-
-        # os profile
-        os_profile = {}
-        os_profile['computer_name'] = vmname
-        os_profile['admin_username'] = username
-        if password:
-            os_profile['admin_password'] = password
-        if ssh_public_key:
-            linux_config = {}
-            key_path = '/home/{}/.ssh/authorized_keys'.format(username)
-            public_keys = [{
-                            'path': key_path,
-                            'key_data': ssh_public_key
-                          }]
-            linux_config['ssh'] = public_keys
-            os_profile['linux_configuration'] = linux_config
+    def create_vm_parameters(self, location, storage_account, container, vm_size, vmname, 
+                             nic_ids, ssh_public_key, publisher, offer, sku, username, password, need_plan = True):
+        plan = None
+        if need_plan:
+            plan = azure.mgmt.compute.models.Plan(name = sku, publisher = publisher, product = offer)
        
-        # storage profile
-        image_ref = {
-                      'publisher': publisher,
-                      'offer': offer,
-                      'sku': sku,
-                      'version': 'latest'
-                    }
-        os_disk_ref = {
-                       'name': 'osDisk',
-                       'create_option': 'fromImage',
-                       'vhd': {
-                                'uri': 'https://{}.blob.core.windows.net/{}/{}-os.vhd'.format(storage_account, container, vmname) 
-                              }
-                      }
-        data_disk_ref = [{
-                          'name': 'nvramDisk',
-                          'disk_size_gb': '10',
-                          'lun': 0,
-                          'create_option': 'empty',
-                          'vhd': {
-                                   'uri': 'https://{}.blob.core.windows.net/{}/{}-nvram.vhd'.format(storage_account, container, vmname) 
-                                 }
-                        }]
-        storage_profile = {
-                           'image_reference': image_ref, 
-                           'os_disk': os_disk_ref, 
-                           'data_disks': data_disk_ref
-                          }
-
+        # hardware profile 
+        hardware_profile = azure.mgmt.compute.models.HardwareProfile(vm_size = vm_size)
+     
+        # os profile
+        if ssh_public_key:
+            key_path = '/home/{}/.ssh/authorized_keys'.format(username)
+            public_key = azure.mgmt.compute.models.SshPublicKey(path = key_path, key_data = ssh_public_key)
+            public_keys = [public_key]
+            ssh_config = azure.mgmt.compute.models.SshConfiguration(public_keys = public_keys)
+            linux_config = azure.mgmt.compute.models.LinuxConfiguration(disable_password_authentication = False,
+                           ssh = ssh_config)
+        os_profile = azure.mgmt.compute.models.OSProfile(computer_name = vmname, admin_username = username, 
+                     admin_password = password, linux_configuration = linux_config)
+        
+        image_ref = azure.mgmt.compute.models.ImageReference(publisher = publisher, offer = offer,
+                    sku = sku, version = 'latest') 
+        
+        # create_option: fromImage, empty, attach  
+        os_vhd_uri = 'https://{}.blob.core.windows.net/{}/{}-os.vhd'.format(storage_account, container, vmname) 
+        os_vhd = azure.mgmt.compute.models.VirtualHardDisk(uri = os_vhd_uri)
+        os_disk_ref = azure.mgmt.compute.models.OSDisk(create_option = 'fromImage', name = 'osDisk', vhd = os_vhd)
+        
+        data_vhd_uri = 'https://{}.blob.core.windows.net/{}/{}-nvram.vhd'.format(storage_account, container, vmname) 
+        data_vhd = azure.mgmt.compute.models.VirtualHardDisk(uri = data_vhd_uri)
+        data_disk_ref = azure.mgmt.compute.models.DataDisk(lun = 0, disk_size_gb = 10, create_option = 'empty', name = 'nvramDisk', vhd = data_vhd)
+        data_disk_refs = [data_disk_ref]
+        
+        storage_profile = azure.mgmt.compute.models.StorageProfile(image_reference = image_ref, os_disk = os_disk_ref,
+                          data_disks = data_disk_refs)
         # network profile
-        primary_nic = True
         nic_list = []
+        primary_nic = True 
         for nic_id in nic_ids:
             if primary_nic:
-                nic_ref = {
-                            'id': nic_id,
-                            'properties': {'primary': 'true'}
-                          }
+                nic_ref = azure.mgmt.compute.models.NetworkInterfaceReference(id = nic_id, primary = True)
                 primary_nic = False
             else:
-                nic_ref = {
-                            'id': nic_id,
-                            'properties': {'primary': 'false'}
-                          }
+                nic_ref = azure.mgmt.compute.models.NetworkInterfaceReference(id = nic_id, primary = False)
             nic_list.append(nic_ref)
-        network_profile = {}
-        network_profile['network_interfaces'] = nic_list
+      
+        network_profile = azure.mgmt.compute.models.NetworkProfile(network_interfaces = nic_list)
 
         # dianostic profile
-        
+        storage_uri = 'https://{}.blob.core.windows.net'.format(storage_account)
+        boot_diagnostics = azure.mgmt.compute.models.BootDiagnostics(enabled = True, storage_uri = storage_uri)
+        diagnostics_profile = azure.mgmt.compute.models.DiagnosticsProfile(boot_diagnostics = boot_diagnostics) 
 
-        # build template 
-        template_params = {
-                            'location': location,
-                            'plan': plan,
-                            'properties': {
-                                'hardware_profile': vm_size,
-                                'os_profile': os_profile,
-                                'storage_profile': storage_profile,
-                                'network_profile': network_profile
-                            }
-                          }
+        # build template_params 
+        vm_create_params = azure.mgmt.compute.models.VirtualMachine(
+                           plan = plan,
+                           location = location,
+                           os_profile = os_profile,
+                           hardware_profile = hardware_profile,
+                           network_profile = network_profile,
+                           storage_profile = storage_profile,
+                           diagnostics_profile = diagnostics_profile)
 
-        return template_params
+        return vm_create_params 
 
     def resize_vm(self, resource_group, vmname, vm_size):
         if supported_vm_sizes.get(vm_size.upper()) is None:
             raise ValueError('Wrong capacity {} provided.'.format(vm_size))
         else:
             vm_size = supported_vm_sizes[vm_size.upper()]
-
+        
+        # first stop the vm 
+        self.deallocate_vm(resource_group, vmname)
+        # second change vm size
         vm = self.get_vm(resource_group, vmname)
         vm.hardware_profile.vm_size = vm_size
         async_vm_update = self.compute_client.virtual_machines.create_or_update(
-                resource_group,
-                vmname,
-                vm
-                )
+                               resource_group,
+                               vmname,
+                               vm
+                          )
         async_vm_update.wait()
+        # last start the vm 
+        self.start_vm(resource_group, vmname)
 
     def attach_data_disk(self, resource_group, vmname, disk_name, disk_size, existing = None):
         if (int(disk_size) < 1):
@@ -731,7 +700,7 @@ class azure_operations:
                        create_option = create_opt
                        )
                   )
-        async_vm_update = self.compute_client.virtual_machiees.create_or_update(
+        async_vm_update = self.compute_client.virtual_machines.create_or_update(
                                resource_group,
                                vmname,
                                vm
@@ -758,11 +727,11 @@ class arg_parse:
     
     def add_credentials(self):
         self.parser.add_argument('-c', '--client_id', required=True, help='login via this client')
-        self.parser.add_argument('-k', '--key', required=True, help='login via this key')
+        self.parser.add_argument('-k', '--secret_key', required=True, help='login via this key')
         self.parser.add_argument('-t', '--tenant_id', required=True, help='login via this tenant')
-        self.parser.add_argument('-s', '--subscription', required=True, help='login via this subscription id')
+        self.parser.add_argument('-s', '--subscription_id', required=True, help='login via this subscription id')
 
-    def run(self):
+    def run_cmd(self):
         self.add_credentials()
         self.add_list_subcommands()
         self.add_create_subcommands()
@@ -774,56 +743,57 @@ class arg_parse:
         self.add_attach_subcommands()
         self.add_detach_subcommands()
         
-        parsed_args = self.parser.parse_args()
-        self.azure_ops = azure_operations(parsed_args.client_id, parsed_args.secret_key, parsed_args.tenant_id, parsed_args.subscription_id)
-        parsed_args.func(parsed_args)
+        self.parsed_args = self.parser.parse_args()
+        # parsed_args.func(parsed_args)
+        self.azure_ops = azure_operations(self.parsed_args.client_id, self.parsed_args.secret_key, self.parsed_args.tenant_id, self.parsed_args.subscription_id)
+        self.parsed_args.func(self.parsed_args)
 
     def add_list_subcommands(self):
         list_subparser = self.list_parser.add_subparsers(title='list',  help='list related resources')
         # list resource groups
         list_rg = list_subparser.add_parser('resource_group', help='list resource groups')
-        list_rg.set_defaults(func=list_resource_groups)
+        list_rg.set_defaults(func=self.list_resource_groups)
         # list all resources within a resource group
         list_re = list_subparser.add_parser('resource', help='list all resources')
         list_re.add_argument('-r', '--resource_group', help='list storage accounts within a resource group')
-        list_re.set_defaults(func=list_resources)
+        list_re.set_defaults(func=self.list_resources)
         # list storage accounts
         list_sa = list_subparser.add_parser('storage_account', help='list storage accounts')
         list_sa.add_argument('-r', '--resource_group', help='list storage accounts within a resource group')
-        list_sa.set_defaults(func=list_storage_accounts)
+        list_sa.set_defaults(func=self.list_storage_accounts)
         # list vms
         list_vm = list_subparser.add_parser('vm', help='list vms within a resource group')
         list_vm.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
         list_vm.add_argument('-n', '--name', help='list a specific vm')
-        list_vm.set_defaults(func=list_virtual_machines)
+        list_vm.set_defaults(func=self.list_virtual_machines)
         # list vnets
         list_vnet = list_subparser.add_parser('vnet', help='list vnets within a resource group')
         list_vnet.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
-        list_vnet.set_defaults(func=list_virtual_networks)
+        list_vnet.set_defaults(func=self.list_virtual_networks)
         # list subnets
         list_subnet = list_subparser.add_parser('subnet', help='list subnets within a resource group')
         list_subnet.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
         list_subnet.add_argument('-v', '--vnet', required=True, help='list resources wihtin this vnet')
-        list_subnet.set_defaults(func=list_subnetworks)
+        list_subnet.set_defaults(func=self.list_subnetworks)
         # list nics
         list_nic = list_subparser.add_parser('nic', help='list nics within a resource group')
         list_nic.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
-        list_nic.set_defaults(func=list_network_interfaces)
+        list_nic.set_defaults(func=self.list_network_interfaces)
         # list a vm's state
         list_state = list_subparser.add_parser('vm_state', help="list a vm's state within a resource group")
         list_state.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
         list_state.add_argument('-n', '--name', required=True, help='list a specific vm')
-        list_state.set_defaults(func=list_vm_state)
+        list_state.set_defaults(func=self.list_vm_state)
         # list a vm's ip 
         list_ip = list_subparser.add_parser('vm_ip', help="list a vm's state within a resource group")
         list_ip.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
         list_ip.add_argument('-n', '--name', required=True, help='list a specific vm')
-        list_ip.set_defaults(func=list_vm_ip)
+        list_ip.set_defaults(func=self.list_vm_ip)
         # list a vm's data disks
         list_disk = list_subparser.add_parser('vm_disk', help="list a vm's data disks")
         list_disk.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
         list_disk.add_argument('-n', '--name', required=True, help='list a specific vm')
-        list_disk.set_defaults(func=list_vm_data_disk)
+        list_disk.set_defaults(func=self.list_vm_data_disk)
 
     def add_create_subcommands(self):
         # create subcommands
@@ -832,20 +802,20 @@ class arg_parse:
         create_rg = create_subparser.add_parser('resource_group', help='create a resource group')
         create_rg.add_argument('-n', '--name', required=True, help='create a resource group with this name')
         create_rg.add_argument('-l', '--location', required=True, help='create a resource group within this region')
-        create_rg.set_defaults(func=create_resource_group)
+        create_rg.set_defaults(func=self.create_resource_group)
         # create storage account
         create_sa = create_subparser.add_parser('storage_account', help='create a storage account')
         create_sa.add_argument('-r', '--resource_group', required=True, help='create a storage accounts within a resource group')
         create_sa.add_argument('-n', '--name', required=True, help='create a storage account with this name')
         create_sa.add_argument('-l', '--location', required=True, help='create a storage account within this region')
         create_sa.add_argument('-t', '--type', help='create a storage account with this type')
-        create_sa.set_defaults(func=create_storage_account)
+        create_sa.set_defaults(func=self.create_storage_account)
         # create storage container
         create_container = create_subparser.add_parser('container', help='create a storage container')
         create_container.add_argument('-r', '--resource_group', required=True, help='create a storage container within this resource group')
         create_container.add_argument('-s', '--storage_account', required=True, help='create a storage container within this storage account')
         create_container.add_argument('-n', '--name', required=True, help='create a storage container with this name')
-        create_container.set_defaults(func=create_storage_container)
+        create_container.set_defaults(func=self.create_storage_container)
         # create vm
         create_vm = create_subparser.add_parser('vm', help='create vms within a resource group')
         create_vm.add_argument('-r', '--resource_group', required=True, help='create a vm wihtin this resource group')
@@ -861,21 +831,21 @@ class arg_parse:
         create_vm.add_argument('-P', '--publisher', help='create a vm from this publisher')
         create_vm.add_argument('-O', '--offer', help='create a vm from this offer')
         create_vm.add_argument('-S', '--sku', required=True, help='create a vm from this sku')
-        create_vm.set_defaults(func=create_virtual_machine)
+        create_vm.set_defaults(func=self.create_virtual_machine)
         # create vnet
         create_vnet = create_subparser.add_parser('vnet', help='create vnets within a resource group')
         create_vnet.add_argument('-r', '--resource_group', required=True, help='create a vnet wihtin this group')
         create_vnet.add_argument('-n', '--name', required=True, help='create a vnet with this name')
         create_vnet.add_argument('-l', '--location', required=True, help='create a vnet within this location')
         create_vnet.add_argument('-p', '--prefix', required=True, help='create a vnet with this address prefix')
-        create_vnet.set_defaults(func=create_virtual_network)
+        create_vnet.set_defaults(func=self.create_virtual_network)
         # create subnet
         create_subnet = create_subparser.add_parser('subnet', help='create subnets within a resource group')
         create_subnet.add_argument('-r', '--resource_group', required=True, help='create a subnet wihtin this group')
         create_subnet.add_argument('-v', '--vnet', required=True, help='create a subnet with this vnet')
         create_subnet.add_argument('-n', '--name', required=True, help='create a subnet with this name')
         create_subnet.add_argument('-p', '--prefix', required=True, help='create a subnet with this address prefix')
-        create_subnet.set_defaults(func=create_subnetwork)
+        create_subnet.set_defaults(func=self.create_subnetwork)
         # create nic
         create_nic = create_subparser.add_parser('nic', help='create nics within a resource group')
         create_nic.add_argument('-r', '--resource_group', required=True, help='create a nic wihtin this group')
@@ -883,13 +853,13 @@ class arg_parse:
         create_nic.add_argument('-e', '--subnet', required=True, help='create a nic with this subnet')
         create_nic.add_argument('-l', '--location', required=True, help='create a nic within this location')
         create_nic.add_argument('-n', '--name', required=True, help='create a nic with this name')
-        create_nic.set_defaults(func=create_network_interface)
+        create_nic.set_defaults(func=self.create_network_interface)
         # create public ip
         create_ip = create_subparser.add_parser('public_ip', help='create a public ip for a vm')
         create_ip.add_argument('-r', '--resource_group', required=True, help='create a public ip wihtin this group')
         create_ip.add_argument('-n', '--name', required=True, help='create a public ip for this vm')
         create_ip.add_argument('-s', '--static', help='create a static ip', action='store_true')
-        create_ip.set_defaults(func=create_public_ip)
+        create_ip.set_defaults(func=self.create_public_ip)
         
     def add_delete_subcommands(self):
         # delete subcommands
@@ -897,46 +867,46 @@ class arg_parse:
         # delete resource group
         delete_rg = delete_subparser.add_parser('resource_group', help='delete a resource group')
         delete_rg.add_argument('-n', '--name', required=True, help='delete a resource group')
-        delete_rg.set_defaults(func=delete_resource_group)
+        delete_rg.set_defaults(func=self.delete_resource_group)
         # delete storage account
         delete_sa = delete_subparser.add_parser('storage_account', help='delete a storage account')
         delete_sa.add_argument('-r', '--resource_group', required=True, help='delete a resource group')
         delete_sa.add_argument('-n', '--name', required=True, help='delete a storage account')
-        delete_sa.set_defaults(func=delete_storage_account)
+        delete_sa.set_defaults(func=self.delete_storage_account)
         # delete vm
         delete_vm = delete_subparser.add_parser('vm', help='delete vms within a resource group')
         delete_vm.add_argument('-r', '--resource_group', required=True, help='delete a vm wihtin this resource group')
         delete_vm.add_argument('-n', '--name', required=True, help='delete a vm with this name')
-        delete_vm.set_defaults(func=delete_virtual_machine)
+        delete_vm.set_defaults(func=self.delete_virtual_machine)
         # delete vnet
         delete_vnet = delete_subparser.add_parser('vnet', help='delete vnets within a resource group')
         delete_vnet.add_argument('-r', '--resource_group', required=True, help='delete a vnet wihtin this group')
         delete_vnet.add_argument('-n', '--name', required=True, help='delete a vnet with this name')
-        delete_vnet.set_defaults(func=delete_virtual_network)
+        delete_vnet.set_defaults(func=self.delete_virtual_network)
         # delete subnet
         delete_subnet = delete_subparser.add_parser('subnet', help='delete subnets within a resource group')
         delete_subnet.add_argument('-r', '--resource_group', required=True, help='delete a subnet wihtin this group')
         delete_subnet.add_argument('-v', '--vnet', required=True, help='delete a subnet wihtin this vnet')
         delete_subnet.add_argument('-n', '--name', required=True, help='delete a subnet with this name')
-        delete_subnet.set_defaults(func=delete_subnetwork)
+        delete_subnet.set_defaults(func=self.delete_subnetwork)
         # delete nic
         delete_nic = delete_subparser.add_parser('nic', help='delete nics within a resource group')
         delete_nic.add_argument('-r', '--resource_group', required=True, help='delete a nic wihtin this group')
         delete_nic.add_argument('-n', '--name', required=True, help='delete a nic with this name')
-        delete_nic.set_defaults(func=delete_network_interface)
+        delete_nic.set_defaults(func=self.delete_network_interface)
         # delete container
         delete_container = delete_subparser.add_parser('container', help='delete container within a storage account')
         delete_container.add_argument('-s', '--storage_account', required=True, help='delete a container within this storage account')
         delete_container.add_argument('-k', '--account_key', required=True, help='storage account key')
         delete_container.add_argument('-n', '--name', required=True, help='delete a container with this name')
-        delete_container.set_defaults(func=delete_storage_container)
+        delete_container.set_defaults(func=self.delete_storage_container)
         # delete a page blob 
         delete_blob = delete_subparser.add_parser('blob', help='delete a blob within a storage account')
         delete_blob.add_argument('-s', '--storage_account', required=True, help='delete a page blob within this storage account')
         delete_blob.add_argument('-k', '--account_key', required=True, help='storage account key')
         delete_blob.add_argument('-c', '--container', required=True, help='delete a page blob within this container')
         delete_blob.add_argument('-n', '--name', required=True, help='delete a blob with this name')
-        delete_blob.set_defaults(func=delete_page_blob)
+        delete_blob.set_defaults(func=self.delete_page_blob)
 
     def add_start_subcommands(self):
         # start subcommand
@@ -944,7 +914,7 @@ class arg_parse:
         start_vm = start_subparser.add_parser('vm', help='start a vm')
         start_vm.add_argument('-r', '--resource_group', required=True, help='start a vm within this group')
         start_vm.add_argument('-n', '--name', required=True, help='start a vm with this name')
-        start_vm.set_defaults(func=start_virtual_machine) 
+        start_vm.set_defaults(func=self.start_virtual_machine) 
 
     def add_stop_subcommands(self):
         # stop command
@@ -952,7 +922,7 @@ class arg_parse:
         stop_vm = stop_subparser.add_parser('vm', help='stop a vm')
         stop_vm.add_argument('-r', '--resource_group', required=True, help='stop a vm within this group')
         stop_vm.add_argument('-n', '--name', required=True, help='stop a vm with this name')
-        stop_vm.set_defaults(func=stop_virtual_machine)
+        stop_vm.set_defaults(func=self.stop_virtual_machine)
 
     def add_restart_subcommands(self):
         # restart subcommand
@@ -960,7 +930,7 @@ class arg_parse:
         restart_vm = restart_subparser.add_parser('vm', help='restart a vm')
         restart_vm.add_argument('-r', '--resource_group', required=True, help='restart a vm within this group')
         restart_vm.add_argument('-n', '--name', required=True, help='restart a vm with this name')
-        restart_vm.set_defaults(func=restart_virtual_machine)
+        restart_vm.set_defaults(func=self.restart_virtual_machine)
 
     def add_resize_subcommands(self):
         # resize command
@@ -969,7 +939,7 @@ class arg_parse:
         resize_vm.add_argument('-r', '--resource_group', required=True, help='resize a vm within this group')
         resize_vm.add_argument('-n', '--name', required=True, help='resize a vm with this name')
         resize_vm.add_argument('-c', '--vm_size', required=True, help='resize a vm to this size')
-        resize_vm.set_defaults(func=resize_virtual_machine)
+        resize_vm.set_defaults(func=self.resize_virtual_machine)
 
     def add_attach_subcommands(self):
         # attach subcommand
@@ -980,7 +950,7 @@ class arg_parse:
         attach_disk.add_argument('-d', '--disk_name', required=True, help='attach a disk with this name')
         attach_disk.add_argument('-g', '--disk_size', required=True, help='attach a disk with this size in GiB')
         attach_disk.add_argument('-e', '--existing', help='attach an existing disk')
-        attach_disk.set_defaults(func=attach_disk_to_vm)
+        attach_disk.set_defaults(func=self.attach_disk_to_vm)
 
     def add_detach_subcommands(self):
         # detach subcommand
@@ -989,120 +959,112 @@ class arg_parse:
         detach_disk.add_argument('-r', '--resource_group', required=True, help='detach a disk to a vm within this group')
         detach_disk.add_argument('-n', '--name', required=True, help='detach a disk from a vm with this name')
         detach_disk.add_argument('-d', '--disk_name', required=True, help='detach a disk with this name')
-        detach_disk.set_defaults(func=detach_disk_from_vm)
+        detach_disk.set_defaults(func=self.detach_disk_from_vm)
 
     def list_resources(self, args):
         self.azure_ops.list_resources(args.resource_group)
     
-    def list_resource_groups(args):
+    def list_resource_groups(self, args):
         self.azure_ops.list_resource_groups()
     
-    def list_storage_accounts(args):
+    def list_storage_accounts(self, args):
         self.azure_ops.list_storage_accounts(args.resource_group)
     
-    def list_virtual_machines(args):
+    def list_virtual_machines(self, args):
         self.azure_ops.list_virtual_machines(args.resource_group, args.name)
     
-    def list_virtual_networks(args):
+    def list_virtual_networks(self, args):
         self.azure_ops.list_virtual_networks(args.resource_group)
     
-    def list_subnetworks(args):
+    def list_subnetworks(self, args):
         self.azure_ops.list_subnetworks(args.resource_group, args.vnet)
     
-    def list_network_interfaces(args):
+    def list_network_interfaces(self, args):
         self.azure_ops.list_network_interfaces(args.resource_group)
     
-    def list_vm_state(args):
+    def list_vm_state(self, args):
         state = self.azure_ops.list_vm_state(args.resource_group, args.name)
-        print ''
-        print 'VM name : {}'.format(args.name)
-        print 'VM state : {}'.format(state)
     
-    def list_vm_ip(args):
-        public_ips = self.azure_ops.list_vm_public_ip(args.resource_group, args.name)
-        private_ips = self.azure_ops.list_vm_private_ip(args.resource_group, args.name)
-        print ''
-        print 'VM name : {}'.format(args.name)
-        print 'Public ip : {}'.format(public_ips)
-        print 'Private ip : {}'.format(private_ips)
+    def list_vm_ip(self, args):
+        self.azure_ops.list_vm_public_ip(args.resource_group, args.name)
+        self.azure_ops.list_vm_private_ip(args.resource_group, args.name)
     
-    def delete_resource_group(args):
+    def delete_resource_group(self, args):
         self.azure_ops.delete_resource_group(args.name)
     
-    def delete_storage_account(args):
+    def delete_storage_account(self, args):
         self.azure_ops.delete_storage_account(args.resource_group, args.name)
     
-    def delete_virtual_network(args):
+    def delete_virtual_network(self, args):
         self.azure_ops.delete_vnet(args.resource_group, args.name)
     
-    def delete_subnetwork(args):
+    def delete_subnetwork(self, args):
         self.azure_ops.delete_subnet(args.resource_group, args.vnet, args.name)
     
-    def delete_network_interface(args):
+    def delete_network_interface(self, args):
         self.azure_ops.delete_nic(args.resource_group, args.name)
     
-    def delete_storage_container(args):
+    def delete_storage_container(self, args):
         self.azure_ops.delete_container(args.storage_account, args.account_key, args.name)
     
-    def delete_page_blob(args):
+    def delete_page_blob(self, args):
         self.azure_ops.delete_blob(args.storage_account, args.account_key, args.container, args.name)
     
-    def delete_virtual_machine(args):
+    def delete_virtual_machine(self, args):
         self.azure_ops.delete_vm(args.resource_group, args.name)
     
-    def create_resource_group(args):
+    def create_resource_group(self, args):
         self.azure_ops.create_resource_group(args.name, args.location)
     
-    def create_storage_account(args):
+    def create_storage_account(self, args):
         self.azure_ops.create_storage_account(args.resource_group, args.name, args.location, args.type)
     
-    def create_storage_container(args):
+    def create_storage_container(self, args):
         self.azure_ops.create_storage_container(args.resource_group, args.storage_account, args.name)
     
-    def create_virtual_network(args):
+    def create_virtual_network(self, args):
         self.azure_ops.create_vnet(args.resource_group, args.location, args.name, args.prefix)
     
-    def create_subnetwork(args):
+    def create_subnetwork(self, args):
         self.azure_ops.create_subnet(args.resource_group, args.vnet, args.name, args.prefix)
     
-    def create_network_interface(args):
+    def create_network_interface(self, args):
         self.azure_ops.create_nic(args.resource_group, args.vnet, args.subnet, args.location, args.name)
     
-    def create_virtual_machine(args):
+    def create_virtual_machine(self, args):
         self.azure_ops.create_vm(args.resource_group, args.storage_account, args.location, args.vm_size, args.template, args.name, args.vnet, args.subnet, args.ssh_key, args.os_uri)
     
-    def create_public_ip(args):
+    def create_public_ip(self, args):
         self.azure_ops.create_public_ip(args.resource_group, args.name, args.static)
-        public_ip = self.azure_ops.list_vm_public_ip(args.resource_group, args.name)
-        print 'Pulbic ip : {}'.format(public_ip)
+        self.azure_ops.list_vm_public_ip(args.resource_group, args.name)
     
-    def start_virtual_machine(args):
+    def start_virtual_machine(self, args):
         self.azure_ops.start_vm(args.resource_group, args.name)
     
-    def stop_virtual_machine(args):
+    def stop_virtual_machine(self, args):
         self.azure_ops.deallocate_vm(args.resource_group, args.name)
     
-    def shutdown_virtual_machine(args):
+    def shutdown_virtual_machine(self, args):
         self.azure_ops.stop_vm(args.resource_group, args.name)
     
-    def restart_virtual_machine(args):
+    def restart_virtual_machine(self, args):
         self.azure_ops.restart_vm(args.resource_group, args.name)
     
-    def resize_virtual_machine(args):
+    def resize_virtual_machine(self, args):
         self.azure_ops.resize_vm(args.resource_group, args.name, args.vm_size)
     
-    def list_vm_data_disk(args):
+    def list_vm_data_disk(self, args):
         self.azure_ops.list_data_disks(args.resource_group, args.name)
     
-    def attach_disk_to_vm(args):
+    def attach_disk_to_vm(self, args):
         self.azure_ops.attach_data_disk(args.resource_group, args.name, args.disk_name, args.disk_size, args.existing)
     
-    def detach_disk_from_vm(args):
+    def detach_disk_from_vm(self, args):
         self.azure_ops.detach_data_disk(args.resource_group, args.name, args.disk_name)
 
 if __name__ == '__main__':
     try:
-        args = arg_parse()
-        args.run()
+        ops = arg_parse()
+        ops.run_cmd()
     except Exception as e:
         print '{}'.format(e)
