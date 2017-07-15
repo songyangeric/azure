@@ -774,10 +774,10 @@ class arg_parse:
         self.detach_parser = self.subparsers.add_parser('detach', description='attach disks to a specified vm', help='disk')
     
     def add_credentials(self):
-        self.parser.add_argument('-c', '--client_id', help='login via this client')
-        self.parser.add_argument('-k', '--secret_key', help='login via this key')
-        self.parser.add_argument('-t', '--tenant_id', help='login via this tenant')
-        self.parser.add_argument('-s', '--subscription_id', help='login via this subscription id')
+        self.parser.add_argument('-C', '--client_id', help='login via this client')
+        self.parser.add_argument('-K', '--secret_key', help='login via this key')
+        self.parser.add_argument('-T', '--tenant_id', help='login via this tenant')
+        self.parser.add_argument('-S', '--subscription_id', help='login via this subscription id')
 
     def run_cmd(self):
         self.add_credentials()

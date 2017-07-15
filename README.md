@@ -9,22 +9,22 @@ export AZURE_SUBSCRIPTION_ID=
 
 Otherwise, you need to specify ALL the optional arguments. For each operation, you need to use command like:
 
-azure_operations.py -c CLIENT_ID -k SECRET_KEY -t TENANT_ID -s SUBSCRIPTION_ID {list,create,delete,start,restart,stop,resize,attach,detach}...
+azure_operations.py -C CLIENT_ID -K SECRET_KEY -T TENANT_ID -S SUBSCRIPTION_ID {list,create,delete,start,restart,stop,resize,attach,detach}...
 
-usage: azure_operations.py [-h] [-c CLIENT_ID] [-k SECRET_KEY] [-t TENANT_ID]
-                           [-s SUBSCRIPTION_ID]
+usage: azure_operations.py [-h] [-C CLIENT_ID] [-K SECRET_KEY] [-T TENANT_ID]
+                           [-S SUBSCRIPTION_ID]
                            {list,create,delete,start,restart,stop,resize,attach,detach}
                            ...
 
 optional arguments:
   -h, --help            show this help message and exit
-  -c CLIENT_ID, --client_id CLIENT_ID
+  -C CLIENT_ID, --Client_id CLIENT_ID
                         login via this client
-  -k SECRET_KEY, --secret_key SECRET_KEY
+  -K SECRET_KEY, --secret_key SECRET_KEY
                         login via this key
-  -t TENANT_ID, --tenant_id TENANT_ID
+  -T TENANT_ID, --tenant_id TENANT_ID
                         login via this tenant
-  -s SUBSCRIPTION_ID, --subscription_id SUBSCRIPTION_ID
+  -S SUBSCRIPTION_ID, --subscription_id SUBSCRIPTION_ID
                         login via this subscription id
 
 subcommands:
@@ -48,7 +48,7 @@ subcommands:
 How to create a vm:
 
 usage: azure_operations.py create vm [-h] -r RESOURCE_GROUP -s STORAGE_ACCOUNT
-                                     -c VM_SIZE -n NAME -v VNET -e SUBNET
+                                     -C VM_SIZE -n NAME -v VNET -e SUBNET
                                      [-k SSH_KEY] [-u USERNAME] [-p PASSWORD]
                                      [-P PUBLISHER] [-O OFFER] [-S SKU]
                                      [--public_ip] [--static_ip]
