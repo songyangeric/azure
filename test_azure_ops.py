@@ -1,9 +1,9 @@
 from azure_operations import azure_operations 
 
-tenant_id = '715dbce8-032b-4494-b3d5-c24e4c46c8f8'
-client_id = 'b21c3431-3772-4939-948b-1a32b8745ca6'
-secret_key = '6tNYXZaCbPKijsGjcq3ZHN7SNLwse4gCQ6jFsaZqsJg='
-subscription_id = '56183da2-b1d8-49cd-9ade-d24b928f7452'
+tenant_id = 
+client_id = 
+secret_key = 
+subscription_id = 
 
 ssh_public_key = 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCyYNyPI1QjpmWbDjbTqkqe7qi3wc97K5JpygX9EeLNEY3VQqzAJsfHwvxkPnyOqKiYXOV3johwQKiZct2/1MUEpd8MvMCaDhlzyf7OrJ7DNgI5P8Ilh/dhCxe6W0crlWcG6UE+ldHzbRrphhMzdt2CNJ3nh/gLGMpQGASHtCJZrXzUHCqu/vivfdm6Zy2bbsNYeCdbJ6MJwaQ2FnKUhGAyeDi7SdsXb+kizokL6J5dJHKDhIJY2lNfF5jclpkoM694wvfSupe+Zz4tx7EVlxDi2BtLrwRSiRWtTIsXYGiyz2Wx3AWzxPGSkLLqBEk0AacWsGba4hElLiAa31NZI5mt dd_user@Jumpbox2' 
 username = 'sysadmin'
