@@ -603,13 +603,19 @@ class azure_operations:
                               nic_ids = nic_ids, ssh_public_key = ssh_public_key, 
                               publisher = publisher, offer = offer, sku = sku,
                               username = username, password = password, need_plan = False)
-            async_vm_create = self.compute_client.virtual_machines.create_or_update(
-                                  resource_group,
-                                  vmname,
-                                  parameters
-                              )
-            async_vm_create.wait()
-        
+            try:
+                async_vm_create = self.compute_client.virtual_machines.create_or_update(
+                                      resource_group,
+                                      vmname,
+                                      parameters
+                                  )
+                async_vm_create.wait()
+            except Exception:
+               for subnet in subnets:
+                   nic_name = vmname + '-nic{}'.format(nic_num)
+                   self.delete_nic(resource_group, nic_name)
+               self.delete_container(resource_group, storage_account, container)
+                 
         # add a public ip if needed
         if public_ip:
             if static_public_ip:
