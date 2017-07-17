@@ -159,24 +159,39 @@ class azure_operations:
         page_blob_service = PageBlobService(account_name = storage_account ,account_key = account_key)
         create_container = page_blob_service.create_container(container_name = container)
 
-    def list_vhd_per_storage_account(self, resource_group, storage_account):
+    def list_storage_container(self, resource_group, storage_account):
         account_key = self.list_storage_account_primary_key(resource_group, storage_account)
 
         page_blob_service = PageBlobService(account_name = storage_account ,account_key = account_key)
         containers = page_blob_service.list_containers()
-        for container in containers: 
-            page_blobs = page_blob_service.list_blobs(container_name = container.name)
-            for page_blob in page_blobs:
-                if re.search(r'\.vhd', page_blob.name):
-                    print '{}/{}/{}: {}/{}'.format(storage_account, container.name, page_blob.name, page_blob.properties.lease.status, page_blob.properties.lease.state)
+        for container in containers:
+            print container.name
 
-    def list_vhds(self, resource_group, storage_account):
+    def list_vhd_per_container(self, blob_service, storage_account, container):
+        page_blobs = blob_service.list_blobs(container_name = container)
+        for page_blob in page_blobs:
+            if re.search(r'\.vhd', page_blob.name):
+                print '{}/{}/{}: {}/{}'.format(storage_account, container, page_blob.name, 
+                       page_blob.properties.lease.status, page_blob.properties.lease.state)
+
+    def list_vhd_per_storage_account(self, resource_group, storage_account, container):
+        account_key = self.list_storage_account_primary_key(resource_group, storage_account)
+
+        page_blob_service = PageBlobService(account_name = storage_account ,account_key = account_key)
+        if container:
+            self.list_vhd_per_container(page_blob_service, storage_account, container)
+        else:
+            containers = page_blob_service.list_containers()
+            for container in containers:
+                self.list_vhd_per_container(page_blob_service, storage_account, container.name)
+
+    def list_vhds(self, resource_group, storage_account, container):
         if storage_account is None:
             storage_accounts = self.storage_client.storage_accounts.list_by_resource_group(resource_group)
             for storage_account in storage_accounts:
                 self.list_vhd_per_storage_account(resource_group, storage_account.name)
         else:
-            self.list_vhd_per_storage_account(resource_group, storage_account)
+            self.list_vhd_per_storage_account(resource_group, storage_account, container)
 
     def print_vm_info(self, resource_group, vm_obj):
         print ''
@@ -215,11 +230,10 @@ class azure_operations:
         
     def list_vm_state(self, resource_group, vmname):
         vm = self.get_vm(resource_group, vmname)
-        try:
-            state = vm.instance_view.statuses[1].display_status
+        state = vm.instance_view.statuses[0].display_status
         # VM may not be successfully deployed in below case
-        except Exception: 
-            state = vm.instance_view.statuses[0].display_status
+        if state == 'Provisioning succeeded':
+            state = vm.instance_view.statuses[1].display_status
         print 'VM Status : {}'.format(state)
         return state
 
@@ -310,7 +324,8 @@ class azure_operations:
         page_blob_service = PageBlobService(account_name = storage_account ,account_key = account_key)
         delete_blob = page_blob_service.delete_container(container_name = container)
 
-    def delete_blob(self, storage_account, account_key, container, blob_name):
+    def delete_blob(self, resource_group, storage_account, container, blob_name):
+        storage_account_key = self.list_storage_account_primary_key(resource_group, storage_account)
         page_blob_service = PageBlobService(account_name = storage_account ,account_key = account_key)
         delete_blob = page_blob_service.delete_blob(container_name = container, blob_name = blob_name)
         
@@ -810,6 +825,11 @@ class arg_parse:
         list_sa = list_subparser.add_parser('storage_account', help='list storage accounts')
         list_sa.add_argument('-r', '--resource_group', help='list storage accounts within a resource group')
         list_sa.set_defaults(func=self.list_storage_accounts)
+        # list storage containers
+        list_sa = list_subparser.add_parser('container', help='list storage containers')
+        list_sa.add_argument('-r', '--resource_group', help='list storage containers within a resource group')
+        list_sa.add_argument('-s', '--storage_account', help='list storage containers within a storage_account')
+        list_sa.set_defaults(func=self.list_storage_containers)
         # list vms
         list_vm = list_subparser.add_parser('vm', help='list vms within a resource group')
         list_vm.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
@@ -847,6 +867,7 @@ class arg_parse:
         list_disk = list_subparser.add_parser('vhd', help="list vhds within a storage account")
         list_disk.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
         list_disk.add_argument('-s', '--storage_account', help='list vhds within this storage account')
+        list_disk.add_argument('-c', '--container', help='list vhds within this storage container')
         list_disk.set_defaults(func=self.list_vhds)
 
     def add_create_subcommands(self):
@@ -958,8 +979,8 @@ class arg_parse:
         delete_container.set_defaults(func=self.delete_storage_container)
         # delete a page blob 
         delete_blob = delete_subparser.add_parser('blob', help='delete a blob within a storage account')
+        delete_blob.add_argument('-r', '--resource_group', required=True, help='delete a page blob within this group')
         delete_blob.add_argument('-s', '--storage_account', required=True, help='delete a page blob within this storage account')
-        delete_blob.add_argument('-k', '--account_key', required=True, help='storage account key')
         delete_blob.add_argument('-c', '--container', required=True, help='delete a page blob within this container')
         delete_blob.add_argument('-n', '--name', required=True, help='delete a blob with this name')
         delete_blob.set_defaults(func=self.delete_page_blob)
@@ -1026,6 +1047,9 @@ class arg_parse:
     def list_storage_accounts(self, args):
         self.azure_ops.list_storage_accounts(args.resource_group)
     
+    def list_storage_containers(self, args):
+        self.azure_ops.list_storage_container(args.resource_group, args.storage_account)
+    
     def list_virtual_machines(self, args):
         self.azure_ops.list_virtual_machines(args.resource_group, args.name)
     
@@ -1064,7 +1088,7 @@ class arg_parse:
         self.azure_ops.delete_container(args.resource_group, args.storage_account, args.name)
     
     def delete_page_blob(self, args):
-        self.azure_ops.delete_blob(args.storage_account, args.account_key, args.container, args.name)
+        self.azure_ops.delete_blob(args.resource_group, args.storage_account, args.account_key, args.container, args.name)
     
     def delete_virtual_machine(self, args):
         self.azure_ops.delete_vm(args.resource_group, args.name, args.keep_data)
@@ -1110,7 +1134,7 @@ class arg_parse:
         self.azure_ops.list_data_disks(args.resource_group, args.name)
     
     def list_vhds(self, args):
-        self.azure_ops.list_vhds(args.resource_group, args.storage_account)
+        self.azure_ops.list_vhds(args.resource_group, args.storage_account, args.container)
     
     def attach_disk_to_vm(self, args):
         self.azure_ops.attach_data_disk(args.resource_group, args.name, args.disk_name, args.disk_size, args.existing)
