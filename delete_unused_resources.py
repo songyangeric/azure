@@ -1,5 +1,6 @@
 import os
 import subprocess
+import re
 
 vm_whitelist = []
 container_whitelist = ['ddvevhds', 'templates']
@@ -78,16 +79,19 @@ def delete_unused_vhds_per_container(resource_group, storage_account, container)
     cmd = "/usr/bin/python azure_operations.py list vhd -r {} -s {} -c {}".format(resource_group, storage_account, container)
     _p = execute_sync(cmd, shell=True)
     if _p.returncode == 0:
+        if len(_p.stdout.readlines()) == 0:
+            cmd = "/usr/bin/python azure_operations.py delete container -r {} -s {} -n {}".format(resource_group, storage_account, container)
+            _p = execute_sync(cmd, shell=True)
         # ddvestg/vhds/sushilwin220170301153720.vhd: unlocked/available
         for line in _p.stdout.readlines():
             vhd_info = line.split(':')[0]
             vhd_name = vhd_info.split('/')[2].strip()
             if vhd_name in vhd_whitelist:
-                print 'vhd {} is neglected'.format(vhd_name)
+                print 'vhd {}/{}/{} is neglected'.format(storage_account, container, vhd_name)
                 continue
             vhd_state = line.split(':')[1].strip()
             if vhd_state == 'unlocked/available':
-                cmd = "/usr/bin/python azure_operations.py delete vhd -r {} -s {} -c {} -n {}".format(resource_group, storage_account, container, vhd_name)
+                cmd = "/usr/bin/python azure_operations.py delete blob -r {} -s {} -c {} -n {}".format(resource_group, storage_account, container, vhd_name)
                 print 'Deleting vhd {}/{}/{}'.format(storage_account, container, vhd_name)
                 _p = execute_sync(cmd, shell=True)
     else:
@@ -100,6 +104,9 @@ def delete_unused_vhds_per_sa(resource_group, storage_account):
     if _p.returncode == 0:
         for container in _p.stdout.readlines():
             container = container.strip()
+            if re.search(r'\w+-\w+-[cdm]0', container):
+                print 'ATOS container {}/{} will be neglected'.format(storage_account, container)
+                continue
             if 'bootdiagnostics-' in container:
                 cmd = "/usr/bin/python azure_operations.py delete container -r {} -s {} -n {}".format(resource_group, storage_account, container)
                 print 'Deleting storage container {}'.format(container)
@@ -124,8 +131,10 @@ def delete_unused_vhds(resource_group):
 
 
 if __name__ == '__main__':
-    resource_group = 'ddve-dev-rg'
+    # resource_group = 'ddve-dev-rg'
+    resource_group = 'solution-test'
     delete_unused_vms(resource_group)
     delete_unused_nics(resource_group)
-    # delete_unused_vhds(resource_group)
+    delete_unused_vhds(resource_group)
+    
 

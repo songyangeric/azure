@@ -10,7 +10,7 @@ import azure.mgmt.storage.models
 from azure.mgmt.network.models import PublicIPAddress
 from azure.mgmt.storage.models.sku import Sku
 from azure.mgmt.storage.models.storage_account_create_parameters import StorageAccountCreateParameters
-from azure.storage.blob import PageBlobService
+from azure.storage.blob.baseblobservice import BaseBlobService
 
 # VM size and capacity mapping
 supported_vm_sizes = {
@@ -71,6 +71,16 @@ class azure_operations:
         print '\tId: %s' % item.id
         print '\tLocation: %s' % item.location
 
+    def print_storage_account_info(self, sa):
+        print ''
+        print '\tName: {}'.format(sa.name)
+        kind = str(sa.kind)
+        kind = kind.split('.')[1]
+        print '\tKind: {}'.format(kind)
+        replication = str(sa.sku.name).split('.')[1] 
+        print '\tReplication: {}'.format(replication)
+        print '\tLocation: {}'.format(sa.location)
+
     def list_resource_groups(self):
         for rg in self.resource_client.resource_groups.list():
             self.print_item(rg)
@@ -94,10 +104,10 @@ class azure_operations:
     def list_storage_accounts(self, resource_group = None):
         if resource_group:
             for sa in self.storage_client.storage_accounts.list_by_resource_group(resource_group):
-                self.print_item(sa)
+                self.print_storage_account_info(sa)
         else:
             for sa in self.storage_client.storage_accounts.list():
-                self.print_item(sa)
+                self.print_storage_account_info(sa)
 
     def storage_account_within_resource_group(self, resource_group, storage_account):
         for sa in self.storage_client.storage_accounts.list_by_resource_group(resource_group):
@@ -156,34 +166,34 @@ class azure_operations:
 
         account_key = self.list_storage_account_primary_key(resource_group, storage_account)
 
-        page_blob_service = PageBlobService(account_name = storage_account ,account_key = account_key)
-        create_container = page_blob_service.create_container(container_name = container)
+        blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
+        create_container = blob_service.create_container(container_name = container)
 
     def list_storage_container(self, resource_group, storage_account):
         account_key = self.list_storage_account_primary_key(resource_group, storage_account)
 
-        page_blob_service = PageBlobService(account_name = storage_account ,account_key = account_key)
-        containers = page_blob_service.list_containers()
+        blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
+        containers = blob_service.list_containers()
         for container in containers:
             print container.name
 
     def list_vhd_per_container(self, blob_service, storage_account, container):
-        page_blobs = blob_service.list_blobs(container_name = container)
-        for page_blob in page_blobs:
-            if re.search(r'\.vhd', page_blob.name):
-                print '{}/{}/{}: {}/{}'.format(storage_account, container, page_blob.name, 
-                       page_blob.properties.lease.status, page_blob.properties.lease.state)
+        blobs = blob_service.list_blobs(container_name = container)
+        for blob in blobs:
+            if re.search(r'\.vhd', blob.name):
+                print '{}/{}/{}: {}/{}'.format(storage_account, container, blob.name, 
+                       blob.properties.lease.status, blob.properties.lease.state)
 
     def list_vhd_per_storage_account(self, resource_group, storage_account, container):
         account_key = self.list_storage_account_primary_key(resource_group, storage_account)
 
-        page_blob_service = PageBlobService(account_name = storage_account ,account_key = account_key)
+        blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
         if container:
-            self.list_vhd_per_container(page_blob_service, storage_account, container)
+            self.list_vhd_per_container(blob_service, storage_account, container)
         else:
-            containers = page_blob_service.list_containers()
+            containers = blob_service.list_containers()
             for container in containers:
-                self.list_vhd_per_container(page_blob_service, storage_account, container.name)
+                self.list_vhd_per_container(blob_service, storage_account, container.name)
 
     def list_vhds(self, resource_group, storage_account, container):
         if storage_account is None:
@@ -304,9 +314,8 @@ class azure_operations:
         os_disk_container = os_disk_uri.split('/')[3]
         os_disk_blob_name = os_disk_uri.split('/')[4]
         os_disk_storage_account_name = os_disk_uri.split('/')[2].split('.')[0]
-        os_disk_storage_account_key = self.list_storage_account_primary_key(resource_group, os_disk_storage_account_name)
         
-        self.delete_blob(os_disk_storage_account_name, os_disk_storage_account_key, os_disk_container, os_disk_blob_name)
+        self.delete_blob(resource_group, os_disk_storage_account_name, os_disk_container, os_disk_blob_name)
 
         # Delete all the data disks
         if not keep_data:
@@ -315,23 +324,22 @@ class azure_operations:
                 data_disk_container = data_disk_uri.split('/')[3]
                 data_disk_blob_name = data_disk_uri.split('/')[4]
                 data_disk_storage_account_name = data_disk_uri.split('/')[2].split('.')[0]
-                data_disk_storage_account_key = self.list_storage_account_primary_key(resource_group, data_disk_storage_account_name)
     
-                self.delete_blob(data_disk_storage_account_name, data_disk_storage_account_key, data_disk_container, data_disk_blob_name)
+                self.delete_blob(resource_group, data_disk_storage_account_name, data_disk_container, data_disk_blob_name)
  
     def delete_container(self, resource_group, storage_account, container):
         account_key = self.list_storage_account_primary_key(resource_group, storage_account)
-        page_blob_service = PageBlobService(account_name = storage_account ,account_key = account_key)
-        delete_blob = page_blob_service.delete_container(container_name = container)
+        blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
+        blob_service.delete_container(container_name = container)
 
     def delete_blob(self, resource_group, storage_account, container, blob_name):
-        storage_account_key = self.list_storage_account_primary_key(resource_group, storage_account)
-        page_blob_service = PageBlobService(account_name = storage_account ,account_key = account_key)
-        delete_blob = page_blob_service.delete_blob(container_name = container, blob_name = blob_name)
+        account_key = self.list_storage_account_primary_key(resource_group, storage_account)
+        blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
+        blob_service.delete_blob(container_name = container, blob_name = blob_name)
         
-        remaining_blobs = page_blob_service.list_blobs(container_name = container)
+        remaining_blobs = blob_service.list_blobs(container_name = container)
         if len(list(remaining_blobs)) == 0:
-            delete_container = page_blob_service.delete_container(container_name = container)
+            delete_container = blob_service.delete_container(container_name = container)
 
     def list_data_disks(self, resource_group, vmname):
         virtual_machine = self.get_vm(resource_group, vmname)
@@ -1088,7 +1096,7 @@ class arg_parse:
         self.azure_ops.delete_container(args.resource_group, args.storage_account, args.name)
     
     def delete_page_blob(self, args):
-        self.azure_ops.delete_blob(args.resource_group, args.storage_account, args.account_key, args.container, args.name)
+        self.azure_ops.delete_blob(args.resource_group, args.storage_account, args.container, args.name)
     
     def delete_virtual_machine(self, args):
         self.azure_ops.delete_vm(args.resource_group, args.name, args.keep_data)
