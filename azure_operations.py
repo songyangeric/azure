@@ -5,11 +5,8 @@ from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.network import NetworkManagementClient
 from azure.mgmt.storage import StorageManagementClient
 import azure.mgmt.compute.models
-import azure.mgmt.network.models 
-import azure.mgmt.storage.models
-from azure.mgmt.network.models import PublicIPAddress
-from azure.mgmt.storage.models.sku import Sku
-from azure.mgmt.storage.models.storage_account_create_parameters import StorageAccountCreateParameters
+from azure.mgmt.network.models import PublicIPAddress 
+from azure.mgmt.storage.models import Kind, Sku, StorageAccountCreateParameters
 from azure.storage.blob.baseblobservice import BaseBlobService
 
 # VM size and capacity mapping
@@ -115,31 +112,38 @@ class azure_operations:
                 return True
         return False
 
-    def create_storage_account(self, resource_group, sa_name, location, account_type = None, replication_type = None, access_tier = None):
-        if account_type is None:
-            account_type = 'Storage'
-        elif account_type not in account_types:
-            raise ValueError('Invalid account type')
+    def create_storage_account(self, resource_group, sa_name, account_kind = None, replication_type = None, access_tier = None):
+        if account_kind is None:
+            account_kind = 'Storage'
+        elif account_kind not in account_types:
+            raise ValueError('Invalid account kind, choose between Storage and BlobStorage')
 
         if replication_type is None:
             replication_type = 'Standard_LRS'
         elif replication_type not in replication_types:
             raise ValueError('Invalid replication type.')
         
-        if account_type == 'BlobStorage':
+        if account_kind == 'BlobStorage':
             if replication_type not in ['Standard_LRS', 'Standard_RAGRS']:
                 raise ValueError('Blob storage only supports Standard_LRS or Standard_RAGRS')
+            if not access_tier:
+                access_tier = 'Hot'
             if access_tier not in access_tiers:
-                raise ValueError('You must specify access tier for Blob Storage account')
+                raise ValueError('Access tier must be Hot or Cool')
         else:
             access_tier = None
+        
+        rg_ref = self.resource_client.resource_groups.get(resource_group)
+        if rg_ref is None:
+            raise ValueError('The specified resource group {} dose not exist.'.format(resource_group))
+        location = rg_ref.location
         
         # check account name availability
         valid_name = self.storage_client.storage_accounts.check_name_availability(sa_name)
         if not valid_name.name_available:
             raise ValueError(valid_name.message)
 
-        param = StorageAccountCreateParameters(sku = Sku(replication_type), kind = account_type, location = location, access_tier = access_tier)  
+        param = StorageAccountCreateParameters(sku = Sku(replication_type), kind = account_kind, location = location, access_tier = access_tier)  
         async_sa_create = self.storage_client.storage_accounts.create(
                               resource_group,
                               sa_name,
@@ -185,6 +189,10 @@ class azure_operations:
                        blob.properties.lease.status, blob.properties.lease.state)
 
     def list_vhd_per_storage_account(self, resource_group, storage_account, container):
+        if storage_account.kind == Kind.blob_storage:
+            print 'Listing VHD operations will neglect Blob storage account.'
+            return
+
         account_key = self.list_storage_account_primary_key(resource_group, storage_account)
 
         blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
@@ -196,12 +204,16 @@ class azure_operations:
                 self.list_vhd_per_container(blob_service, storage_account, container.name)
 
     def list_vhds(self, resource_group, storage_account, container):
-        if storage_account is None:
-            storage_accounts = self.storage_client.storage_accounts.list_by_resource_group(resource_group)
-            for storage_account in storage_accounts:
-                self.list_vhd_per_storage_account(resource_group, storage_account.name)
+        storage_accounts = self.storage_client.storage_accounts.list_by_resource_group(resource_group)
+        if storage_account:
+            for sa_ref in storage_accounts:
+                if storage_account == sa_ref.name:
+                    self.list_vhd_per_storage_account(resource_group, sa_ref, container)
+                else:
+                   continue 
         else:
-            self.list_vhd_per_storage_account(resource_group, storage_account, container)
+            for sa_ref in storage_accounts:
+                self.list_vhd_per_storage_account(resource_group, sa_ref, container)
 
     def print_vm_info(self, resource_group, vm_obj):
         print ''
@@ -513,17 +525,18 @@ class azure_operations:
 
         vm = self.get_vm(resource_group, vmname)
         for nic_ref in vm.network_profile.network_interfaces:
-            if nic_ref.primary:
+            if not nic_ref.primary or nic_ref.primary:
                 nic_name = nic_ref.id.split('/')[8]
                 break
 
         nic = self.network_client.network_interfaces.get(resource_group, nic_name)
         # first create a public ip
         public_ip_obj = self.network_client.public_ip_addresses
+        public_ip_param = PublicIPAddress(location = nic.location, public_ip_allocation_method = create_opt)
         async_ip_create = public_ip_obj.create_or_update(
                               resource_group, 
                               nic_name,
-                              PublicIPAddress(location = nic.location, public_ip_allocation_method = create_opt)
+                              public_ip_param
                           )
         async_ip_create.wait()
         # second bind the public ip to the primary nic
@@ -890,8 +903,9 @@ class arg_parse:
         create_sa = create_subparser.add_parser('storage_account', help='create a storage account')
         create_sa.add_argument('-r', '--resource_group', required=True, help='create a storage accounts within a resource group')
         create_sa.add_argument('-n', '--name', required=True, help='create a storage account with this name')
-        create_sa.add_argument('-l', '--location', required=True, help='create a storage account within this region')
-        create_sa.add_argument('-t', '--type', help='create a storage account with this type')
+        create_sa.add_argument('-k', '--kind', help='[Storage|BlobStorage]')
+        create_sa.add_argument('-t', '--type', help='[Standard_LRS|Standard_GRS|Standard_RAGRS|Standard_ZRS|Premium_LRS]')
+        create_sa.add_argument('-a', '--access_tier', help='[Hot|Cool]')
         create_sa.set_defaults(func=self.create_storage_account)
         # create storage container
         create_container = create_subparser.add_parser('container', help='create a storage container')
@@ -1105,7 +1119,7 @@ class arg_parse:
         self.azure_ops.create_resource_group(args.name, args.location)
     
     def create_storage_account(self, args):
-        self.azure_ops.create_storage_account(args.resource_group, args.name, args.location, args.type)
+        self.azure_ops.create_storage_account(args.resource_group, args.name, args.kind, args.type, args.access_tier)
     
     def create_storage_container(self, args):
         self.azure_ops.create_storage_container(args.resource_group, args.storage_account, args.name)
@@ -1143,6 +1157,9 @@ class arg_parse:
     
     def list_vhds(self, args):
         self.azure_ops.list_vhds(args.resource_group, args.storage_account, args.container)
+
+    def list_blobs(self, args):
+        self.azure_ops.list_blobs(args.resource_group, args.storage_account, args.container)
     
     def attach_disk_to_vm(self, args):
         self.azure_ops.attach_data_disk(args.resource_group, args.name, args.disk_name, args.disk_size, args.existing)
