@@ -33,11 +33,14 @@ class azure_operations:
             self.tenant_id = tenant_id
             self.subscription_id = subscription_id
         else:
-            self.client_id = os.environ['AZURE_CLIENT_ID'] 
-            self.secret_key = os.environ['AZURE_SECRET_KEY'] 
-            self.tenant_id = os.environ['AZURE_TENANT_ID']
-            self.subscription_id = os.environ['AZURE_SUBSCRIPTION_ID']
-
+            try:
+                self.client_id = os.environ['AZURE_CLIENT_ID'] 
+                self.secret_key = os.environ['AZURE_SECRET_KEY'] 
+                self.tenant_id = os.environ['AZURE_TENANT_ID']
+                self.subscription_id = os.environ['AZURE_SUBSCRIPTION_ID']
+            except Exception:
+                raise ValueError('Please set client_id and tenant_id and secret_key and sucscription_id')
+        
         # initialize resouce and storage management object
         try:
             credentials = ServicePrincipalCredentials(
@@ -188,20 +191,20 @@ class azure_operations:
                 print '{}/{}/{}: {}/{}'.format(storage_account, container, blob.name, 
                        blob.properties.lease.status, blob.properties.lease.state)
 
-    def list_vhd_per_storage_account(self, resource_group, storage_account, container):
-        if storage_account.kind == Kind.blob_storage:
+    def list_vhd_per_storage_account(self, resource_group, sa_ref, container):
+        if sa_ref.kind == Kind.blob_storage:
             print 'Listing VHD operations will neglect Blob storage account.'
             return
 
-        account_key = self.list_storage_account_primary_key(resource_group, storage_account)
+        account_key = self.list_storage_account_primary_key(resource_group, sa_ref.name)
 
-        blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
+        blob_service = BaseBlobService(account_name = sa_ref.name ,account_key = account_key)
         if container:
-            self.list_vhd_per_container(blob_service, storage_account, container)
+            self.list_vhd_per_container(blob_service, sa_ref.name, container)
         else:
             containers = blob_service.list_containers()
             for container in containers:
-                self.list_vhd_per_container(blob_service, storage_account, container.name)
+                self.list_vhd_per_container(blob_service, sa_ref.name, container.name)
 
     def list_vhds(self, resource_group, storage_account, container):
         storage_accounts = self.storage_client.storage_accounts.list_by_resource_group(resource_group)
@@ -606,14 +609,14 @@ class azure_operations:
                 raise ValueError('Subnet {} does not exist.'.format(subnet))
             
         # create nic
-        nic_num = 1
+        nic_num = 0 
         nic_ids = []
         for subnet in subnets:
+            nic_num += 1
             nic_name = vmname + '-nic{}'.format(nic_num) 
             nic_ref = self.create_nic(resource_group, vnet, subnet.strip(), location, nic_name)
             nic_id = nic_ref.id
             nic_ids.append(nic_id)
-            nic_num += 1
         
         # create storage container 
         container = '{}-vhds'.format(vmname)
@@ -632,8 +635,17 @@ class azure_operations:
                                   vmname,
                                   parameters
                               )
-            async_vm_create.wait()
-        except Exception:
+            vm = async_vm_create.result()
+        except Exception as e:
+            if 'User failed validation to purchase resources' in e.message:
+               for subnet in subnets:
+                   nic_name = vmname + '-nic{}'.format(nic_num)
+                   self.delete_nic(resource_group, nic_name)
+               self.delete_container(resource_group, storage_account, container)
+               print 'Failed to create vm.'
+               print '{}'.format(e)
+               return
+
             parameters = self.create_vm_parameters(location = location, storage_account = storage_account, 
                               container = container, vm_size = vm_size, vmname = vmname, 
                               nic_ids = nic_ids, ssh_public_key = ssh_public_key, 
@@ -645,12 +657,16 @@ class azure_operations:
                                       vmname,
                                       parameters
                                   )
-                async_vm_create.wait()
-            except Exception:
+                vm = async_vm_create.result()
+            except Exception as e:
+               self.delete_vm(resource_group, vmname)
                for subnet in subnets:
                    nic_name = vmname + '-nic{}'.format(nic_num)
                    self.delete_nic(resource_group, nic_name)
                self.delete_container(resource_group, storage_account, container)
+               print 'Failed to create vm.'
+               print '{}'.format(e)
+               return
                  
         # add a public ip if needed
         if public_ip:
@@ -658,6 +674,8 @@ class azure_operations:
                 self.create_public_ip(resource_group, vmname, True)
             else:
                 self.create_public_ip(resource_group, vmname, False)
+        
+        self.print_vm_info(resource_group, vm)
 
     def create_vm_parameters(self, location, storage_account, container, vm_size, vmname, 
                              nic_ids, ssh_public_key, publisher, offer, sku, username, password, need_plan = True):
@@ -690,7 +708,7 @@ class azure_operations:
         
         data_vhd_uri = 'https://{}.blob.core.windows.net/{}/{}-nvram.vhd'.format(storage_account, container, vmname) 
         data_vhd = azure.mgmt.compute.models.VirtualHardDisk(uri = data_vhd_uri)
-        data_disk_ref = azure.mgmt.compute.models.DataDisk(lun = 0, disk_size_gb = 10, create_option = 'empty', name = 'nvramDisk', vhd = data_vhd)
+        data_disk_ref = azure.mgmt.compute.models.DataDisk(lun = 0, disk_size_gb = 10, create_option = 'fromImage', name = 'nvramDisk', vhd = data_vhd)
         data_disk_refs = [data_disk_ref]
         
         storage_profile = azure.mgmt.compute.models.StorageProfile(image_reference = image_ref, os_disk = os_disk_ref,
