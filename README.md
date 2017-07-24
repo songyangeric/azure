@@ -1,15 +1,21 @@
 About environment setup: Please read EnvSetUp.html about how to setup your test environment.
 
-Before all operations, it is recommended to set the environment variables below:
+1. Before all operations, it is recommended that you set below environment variables:
 
 export AZURE_CLIENT_ID=
 export AZURE_TENANT_ID=
 export AZURE_SECRET_KEY=
 export AZURE_SUBSCRIPTION_ID=
 
-Otherwise, you need to specify ALL the optional arguments. For each operation, you need to use command like:
+Otherwise, you need to specify ALL the optional arguments via the cli parameters. For each operation, you need to use command like:
 
 azure_operations.py -C CLIENT_ID -K SECRET_KEY -T TENANT_ID -S SUBSCRIPTION_ID {list,create,delete,start,restart,stop,resize,attach,detach}...
+
+
+2. If  you wnat to deploy VMs via the scripts, please enable programmatic deployment from the Azure portal. More details about programmatic deployment can be found at https://azure.microsoft.com/en-us/blog/working-with-marketplace-images-on-azure-resource-manager/. This enablement is done once for all and you need to do this for every subscription that you want use via this script.
+
+
+Usage:
 
 usage: azure_operations.py [-h] [-C CLIENT_ID] [-K SECRET_KEY] [-T TENANT_ID]
                            [-S SUBSCRIPTION_ID]
