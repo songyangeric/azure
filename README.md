@@ -2,7 +2,7 @@ About environment setup: Please read EnvSetUp.html about how to setup your test 
 
 1. Before all operations, it is recommended that you set below environment variables:
 
-```
+```Shell
 export AZURE_CLIENT_ID=
 export AZURE_TENANT_ID=
 export AZURE_SECRET_KEY=
@@ -11,7 +11,7 @@ export AZURE_SUBSCRIPTION_ID=
 
 Otherwise, you need to specify ALL the optional arguments via the cli parameters. For each operation, you need to use command like:
 
-```
+```Shell
 azure_operations.py -C CLIENT_ID -K SECRET_KEY -T TENANT_ID -S SUBSCRIPTION_ID {list,create,delete,start,restart,stop,resize,attach,detach}...
 ```
 
@@ -20,7 +20,7 @@ azure_operations.py -C CLIENT_ID -K SECRET_KEY -T TENANT_ID -S SUBSCRIPTION_ID {
 ![image](https://github.com/songyangeric/azure/raw/master/programmatic_deployment.png)
 
 Usage:
-```
+```Shell
 usage: azure_operations.py [-h] [-C CLIENT_ID] [-K SECRET_KEY] [-T TENANT_ID] [-S SUBSCRIPTION_ID]     
                            {list,create,delete,start,restart,stop,resize,attach,detach}
                            ...
@@ -35,8 +35,7 @@ optional arguments:
 subcommands:
   valid subcommands
 
-  {list,create,delete,start,restart,stop,resize,attach,detach}
-                        additional help
+  {list,create,delete,start,restart,stop,resize,attach,detach}     additional help
     list                resource_group | storage_account | vm | vnet | subnet | nic | vm_state | vm_ip | vm_disk | vhd
     create              resource_group | storage_account | container | vm | vnet | subnet | nic | public_ip
     delete              resource_group | storage_account | container | vm | vnet | subnet | nic | container | blob
@@ -48,7 +47,7 @@ subcommands:
     detach              disk
 ```
 How to create a vm:
-```
+```Shell
 usage: azure_operations.py create vm [-h] -r RESOURCE_GROUP -s STORAGE_ACCOUNT -C VM_SIZE -n NAME -v VNET -e SUBNET
                                      [-k SSH_KEY] [-u USERNAME] [-p PASSWORD] [-P PUBLISHER] [-O OFFER] [-S SKU]
                                      [--public_ip] [--static_ip]
@@ -72,7 +71,7 @@ optional arguments:
 ```
 
 How to delete a VM:
-```
+```Shell
 usage: azure_operations.py delete vm [-h] -r RESOURCE_GROUP -n NAME
 
 optional arguments:
