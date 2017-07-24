@@ -817,7 +817,7 @@ class arg_parse:
     def __init__(self):
         self.parser = argparse.ArgumentParser()
         self.subparsers = self.parser.add_subparsers(title='subcommands', description='valid subcommands', help='additional help')
-        self.list_parser = self.subparsers.add_parser('list', description='list a specified resource', help='resource_group | storage_account | vm | vnet | subnet | nic | vm_state | vm_ip | vm_disk')
+        self.list_parser = self.subparsers.add_parser('list', description='list a specified resource', help='resource_group | storage_account | container | vm | vnet | subnet | nic | vm_state | vm_ip | vm_disk')
         self.create_parser = self.subparsers.add_parser('create', description='create a specified resource', help='resource_group | storage_account | container | vm | vnet | subnet | nic | public_ip')
         self.delete_parser = self.subparsers.add_parser('delete', description='delete a specified resource', help='resource_group | storage_account | container | vm | vnet | subnet | nic | container | blob')
         self.start_parser = self.subparsers.add_parser('start', description='start a specified vm', help='vm')
@@ -893,7 +893,7 @@ class arg_parse:
         list_state.add_argument('-n', '--name', required=True, help='list a specific vm')
         list_state.set_defaults(func=self.list_vm_state)
         # list a vm's ip 
-        list_ip = list_subparser.add_parser('vm_ip', help="list a vm's state within a resource group")
+        list_ip = list_subparser.add_parser('vm_ip', help="list a vm's ips within a resource group")
         list_ip.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
         list_ip.add_argument('-n', '--name', required=True, help='list a specific vm')
         list_ip.set_defaults(func=self.list_vm_ip)
@@ -932,7 +932,7 @@ class arg_parse:
         create_container.add_argument('-n', '--name', required=True, help='create a storage container with this name')
         create_container.set_defaults(func=self.create_storage_container)
         # create vm
-        create_vm = create_subparser.add_parser('vm', help='create vms within a resource group')
+        create_vm = create_subparser.add_parser('vm', help='create a vm within a resource group')
         create_vm.add_argument('-r', '--resource_group', required=True, help='create a vm wihtin this resource group')
         create_vm.add_argument('-s', '--storage_account', required=True, help='create a vm wiht this storage account')
         create_vm.add_argument('-c', '--vm_size', required=True, help='create a vm with this size')
@@ -949,21 +949,21 @@ class arg_parse:
         create_vm.add_argument('--static_ip', action='store_true', help='create a vm with a static ip')
         create_vm.set_defaults(func=self.create_virtual_machine)
         # create vnet
-        create_vnet = create_subparser.add_parser('vnet', help='create vnets within a resource group')
+        create_vnet = create_subparser.add_parser('vnet', help='create a virtual network within a resource group')
         create_vnet.add_argument('-r', '--resource_group', required=True, help='create a vnet wihtin this group')
         create_vnet.add_argument('-n', '--name', required=True, help='create a vnet with this name')
         create_vnet.add_argument('-l', '--location', required=True, help='create a vnet within this location')
         create_vnet.add_argument('-p', '--prefix', required=True, help='create a vnet with this address prefix')
         create_vnet.set_defaults(func=self.create_virtual_network)
         # create subnet
-        create_subnet = create_subparser.add_parser('subnet', help='create subnets within a resource group')
+        create_subnet = create_subparser.add_parser('subnet', help='create a subnet within a virutal network')
         create_subnet.add_argument('-r', '--resource_group', required=True, help='create a subnet wihtin this group')
         create_subnet.add_argument('-v', '--vnet', required=True, help='create a subnet with this vnet')
         create_subnet.add_argument('-n', '--name', required=True, help='create a subnet with this name')
         create_subnet.add_argument('-p', '--prefix', required=True, help='create a subnet with this address prefix')
         create_subnet.set_defaults(func=self.create_subnetwork)
         # create nic
-        create_nic = create_subparser.add_parser('nic', help='create nics within a resource group')
+        create_nic = create_subparser.add_parser('nic', help='create a nic within a resource group')
         create_nic.add_argument('-r', '--resource_group', required=True, help='create a nic wihtin this group')
         create_nic.add_argument('-v', '--vnet', required=True, help='create a nic with this vnet')
         create_nic.add_argument('-e', '--subnet', required=True, help='create a nic with this subnet')
@@ -990,13 +990,13 @@ class arg_parse:
         delete_sa.add_argument('-n', '--name', required=True, help='delete a storage account')
         delete_sa.set_defaults(func=self.delete_storage_account)
         # delete vm
-        delete_vm = delete_subparser.add_parser('vm', help='delete vms within a resource group')
+        delete_vm = delete_subparser.add_parser('vm', help='delete a vm within a resource group')
         delete_vm.add_argument('-r', '--resource_group', required=True, help='delete a vm wihtin this resource group')
         delete_vm.add_argument('-n', '--name', required=True, help='delete a vm with this name')
         delete_vm.add_argument('--keep_data', action='store_true', help='delete a vm but keep the data disks')
         delete_vm.set_defaults(func=self.delete_virtual_machine)
         # delete vnet
-        delete_vnet = delete_subparser.add_parser('vnet', help='delete vnets within a resource group')
+        delete_vnet = delete_subparser.add_parser('vnet', help='delete a vnet within a resource group')
         delete_vnet.add_argument('-r', '--resource_group', required=True, help='delete a vnet wihtin this group')
         delete_vnet.add_argument('-n', '--name', required=True, help='delete a vnet with this name')
         delete_vnet.set_defaults(func=self.delete_virtual_network)
@@ -1012,7 +1012,7 @@ class arg_parse:
         delete_nic.add_argument('-n', '--name', required=True, help='delete a nic with this name')
         delete_nic.set_defaults(func=self.delete_network_interface)
         # delete container
-        delete_container = delete_subparser.add_parser('container', help='delete container within a storage account')
+        delete_container = delete_subparser.add_parser('container', help='delete a storage container within a storage account')
         delete_container.add_argument('-s', '--storage_account', required=True, help='delete a container within this storage account')
         delete_container.add_argument('-r', '--resource_group', required=True, help='delete a container within this group')
         delete_container.add_argument('-n', '--name', required=True, help='delete a container with this name')
