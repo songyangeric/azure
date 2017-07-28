@@ -341,30 +341,50 @@ class azure_operations:
             self.delete_nic(resource_group, nic_name)
         
         # Delete the OS disk
-        os_disk_uri = os_disk.vhd.uri
+        # unmanaged disks
+        managed_disk = False
+        if os_disk.vhd: 
+            os_disk_uri = os_disk.vhd.uri
 
-        os_disk_container = os_disk_uri.split('/')[3]
-        os_disk_blob_name = os_disk_uri.split('/')[4]
-        os_disk_storage_account_name = os_disk_uri.split('/')[2].split('.')[0]
+            os_disk_container = os_disk_uri.split('/')[3]
+            os_disk_blob_name = os_disk_uri.split('/')[4]
+            os_disk_storage_account_name = os_disk_uri.split('/')[2].split('.')[0]
+            managed_disk = False
+        # managed disks
+        else:
+            os_disk_blob_name = os_disk.name
+            os_disk_container = None
+            os_disk_storage_account_name = None
+            managed_disk = True 
         
-        self.delete_blob(resource_group, os_disk_storage_account_name, os_disk_container, os_disk_blob_name)
+        self.delete_blob(resource_group, os_disk_storage_account_name, os_disk_container, os_disk_blob_name, managed_disk)
 
         # Delete all the data disks
         if not keep_data:
+            managed_disk = False
             for data_disk in data_disks:
-                data_disk_uri = data_disk.vhd.uri
-                data_disk_container = data_disk_uri.split('/')[3]
-                data_disk_blob_name = data_disk_uri.split('/')[4]
-                data_disk_storage_account_name = data_disk_uri.split('/')[2].split('.')[0]
+                # unmanaged disk:
+                if data_disk.vhd:
+                    data_disk_uri = data_disk.vhd.uri
+                    data_disk_container = data_disk_uri.split('/')[3]
+                    data_disk_blob_name = data_disk_uri.split('/')[4]
+                    data_disk_storage_account_name = data_disk_uri.split('/')[2].split('.')[0]
+                    managed_disk = False
+                # managed disks
+                else:
+                    data_disk_blob_name = data_disk.name
+                    data_disk_container = None
+                    data_disk_storage_account_name = None
+                    managed_disk = True 
     
-                self.delete_blob(resource_group, data_disk_storage_account_name, data_disk_container, data_disk_blob_name)
+                self.delete_blob(resource_group, data_disk_storage_account_name, data_disk_container, data_disk_blob_name, managed_disk)
  
     def delete_container(self, resource_group, storage_account, container):
         account_key = self.list_storage_account_primary_key(resource_group, storage_account)
         blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
         blob_service.delete_container(container_name = container)
 
-    def delete_blob(self, resource_group, storage_account, container, blob_name, managed_disk):
+    def delete_blob(self, resource_group, storage_account, container, blob_name, managed_disk = False):
         if not managed_disk:
             account_key = self.list_storage_account_primary_key(resource_group, storage_account)
             blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
@@ -465,6 +485,12 @@ class azure_operations:
                 private_ip = '{}{} :  Available'.format(subnet_group, private_ip_addr)
             print private_ip
 
+    def list_public_ip(self, resource_group):
+            public_ips = self.network_client.public_ip_addresses.list(resource_group)
+            for public_ip in public_ips:
+                public_ip_name = public_ip.id.split('/')[-1]
+                print '{} : {}'.format(public_ip_name, public_ip.ip_address)
+
     def list_vm_public_ip(self, resource_group, vmname, nic_names = None):
         if nic_names is None:
             nic_names = []
@@ -537,9 +563,11 @@ class azure_operations:
             
             if public_ip:
                 pub_ip_name = public_ip.id.split('/')[8]
-                async_nic_delete = self.network_client.public_ip_addresses.delete(resource_group, pub_ip_name)
-                async_nic_delete.wait()
+                self.delete_public_ip(resource_group, pub_ip_name)
 
+    def delete_public_ip(self, resource_group, public_ip_name):
+         async_nic_delete = self.network_client.public_ip_addresses.delete(resource_group, public_ip_name)
+         async_nic_delete.wait()
 
     def create_public_ip(self, resource_group, vmname, static_ip = False):
         if static_ip:
@@ -808,7 +836,7 @@ class azure_operations:
         # last start the vm 
         self.start_vm(resource_group, vmname)
 
-    def attach_unmanaged_disk(self, vm_obj, disk_name, disk_size, available_lun, existing = None):
+    def attach_unmanaged_disk(self, resource_group, vm_obj, disk_name, disk_size, available_lun, existing = None):
         #make sure data disks are put under the same container with the os disk_name
         os_disk = vm_obj.storage_profile.os_disk
         disk_uri = os_disk.vhd.uri
@@ -830,7 +858,7 @@ class azure_operations:
             )
         )
         async_vm_update = self.compute_client.virtual_machines.create_or_update(
-            resource_group, vmname, vm_obj)
+            resource_group, vm_obj.name, vm_obj)
         async_vm_update.wait()
     
     def attach_managed_disk(self, resource_group, vm_obj, disk_name, disk_size, available_lun, existing = None):
@@ -861,11 +889,11 @@ class azure_operations:
             }
         })
         async_vm_update = self.compute_client.virtual_machines.create_or_update(
-            resource_group, vmname, vm_obj)
+            resource_group, vm_obj.name, vm_obj)
         async_vm_update.wait()
 
 
-    def attach_data_disk(self, resource_group, vmname, disk_name, disk_size, existing = None):
+    def attach_data_disk(self, resource_group, vmname, disk_name, disk_size, existing = None, managed_disk = False):
         if (int(disk_size) < 1):
             disk_size = 1
         elif (int(disk_size) > 1023):
@@ -886,9 +914,9 @@ class azure_operations:
                 break
 
         if managed_disk:
-            self.attach_managed_disk(resource_group, vm_obj, disk_name, disk_size, available_lun, existing)
+            self.attach_managed_disk(resource_group, vm, disk_name, disk_size, available_lun, existing)
         else:
-            self.attach_unmanaged_disk(vm_obj, disk_name, disk_size, available_lun, existing)
+            self.attach_unmanaged_disk(resource_group, vm, disk_name, disk_size, available_lun, existing)
 
     def get_vm_state(self, resource_group, vmname):
         vm = self.compute_client.virtual_machines.get_with_instance_view(resource_group, vmname).virtual_machine
@@ -898,9 +926,9 @@ class arg_parse:
     def __init__(self):
         self.parser = argparse.ArgumentParser()
         self.subparsers = self.parser.add_subparsers(title='subcommands', description='valid subcommands', help='additional help')
-        self.list_parser = self.subparsers.add_parser('list', description='list a specified resource', help='resource_group | storage_account | container | vm | vnet | subnet | nic | vm_state | vm_ip | vm_disk')
+        self.list_parser = self.subparsers.add_parser('list', description='list a specified resource', help='resource_group | storage_account | container | vm | vnet | subnet | nic | public_ip | vhd | vm_state | vm_ip | vm_disk')
         self.create_parser = self.subparsers.add_parser('create', description='create a specified resource', help='resource_group | storage_account | container | vm | vnet | subnet | nic | public_ip')
-        self.delete_parser = self.subparsers.add_parser('delete', description='delete a specified resource', help='resource_group | storage_account | container | vm | vnet | subnet | nic | container | blob')
+        self.delete_parser = self.subparsers.add_parser('delete', description='delete a specified resource', help='resource_group | storage_account | container | vm | vnet | subnet | nic | public_ip | container | blob')
         self.start_parser = self.subparsers.add_parser('start', description='start a specified vm', help='vm')
         self.restart_parser = self.subparsers.add_parser('restart', description='restart a specified vm', help='vm')
         self.stop_parser = self.subparsers.add_parser('stop', description='stop a specified vm', help='vm')
@@ -968,6 +996,10 @@ class arg_parse:
         list_nic = list_subparser.add_parser('nic', help='list nics within a resource group')
         list_nic.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
         list_nic.set_defaults(func=self.list_network_interfaces)
+        # list public ips 
+        list_nic = list_subparser.add_parser('public_ip', help='list public ips within a resource group')
+        list_nic.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
+        list_nic.set_defaults(func=self.list_public_ip)
         # list a vm's state
         list_state = list_subparser.add_parser('vm_state', help="list a vm's state within a resource group")
         list_state.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
@@ -1092,6 +1124,11 @@ class arg_parse:
         delete_nic.add_argument('-r', '--resource_group', required=True, help='delete a nic wihtin this group')
         delete_nic.add_argument('-n', '--name', required=True, help='delete a nic with this name')
         delete_nic.set_defaults(func=self.delete_network_interface)
+        # delete public ip 
+        delete_nic = delete_subparser.add_parser('public_ip', help='delete a public ip within a resource group')
+        delete_nic.add_argument('-r', '--resource_group', required=True, help='delete a nic wihtin this group')
+        delete_nic.add_argument('-n', '--name', required=True, help='delete a public ip with this name')
+        delete_nic.set_defaults(func=self.delete_public_ip)
         # delete container
         delete_container = delete_subparser.add_parser('container', help='delete a storage container within a storage account')
         delete_container.add_argument('-s', '--storage_account', required=True, help='delete a container within this storage account')
@@ -1188,6 +1225,9 @@ class arg_parse:
     def list_vm_state(self, args):
         state = self.azure_ops.list_vm_state(args.resource_group, args.name)
     
+    def list_public_ip(self, args):
+        self.azure_ops.list_public_ip(args.resource_group)
+    
     def list_vm_ip(self, args):
         self.azure_ops.list_vm_public_ip(args.resource_group, args.name)
         self.azure_ops.list_vm_private_ip(args.resource_group, args.name)
@@ -1206,6 +1246,9 @@ class arg_parse:
     
     def delete_network_interface(self, args):
         self.azure_ops.delete_nic(args.resource_group, args.name)
+    
+    def delete_public_ip(self, args):
+        self.azure_ops.delete_public_ip(args.resource_group, args.name)
     
     def delete_storage_container(self, args):
         self.azure_ops.delete_container(args.resource_group, args.storage_account, args.name)
