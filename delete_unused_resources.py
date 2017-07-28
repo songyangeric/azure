@@ -26,7 +26,7 @@ def execute_sync(cmd, out=None, err=None, std_in=None, **kargs):
 # delete unused nics
 def delete_unused_nics(resource_group):
     # Fist list all available nics
-    cmd = "/usr/bin/python azure_operations.py list nic -r {} | grep 'Available'".format(resource_group)
+    cmd = "/usr/bin/python temp_script.py list nic -r {} | grep 'Available'".format(resource_group)
     p = execute_sync(cmd, shell=True)
     if p.returncode == 0:
         # format: vnet/subnet/nic: ip : status
@@ -36,14 +36,12 @@ def delete_unused_nics(resource_group):
             available_nic_info = available_nic_infos[0].split('/')
             available_nic = available_nic_info[2].strip()
             # delete the nic
-            cmd = "/usr/bin/python azure_operations.py delete nic -r {} -n {}".format(resource_group, available_nic)
+            cmd = "/usr/bin/python temp_script.py delete nic -r {} -n {}".format(resource_group, available_nic)
             _p = execute_sync(cmd, shell=True)
             if _p.returncode == 0:
                 print 'Successfully delete NIC {}'.format(available_nic)
             else:
                 print 'Failed to delete NIC {}: {}'.format(available_nic_info[0], _p.stderr.readlines())
-    else:
-        raise SystemError('Fail to get NIC info.')
 
 def read_2_lines(fd):
     while True:
@@ -56,7 +54,7 @@ def read_2_lines(fd):
         yield (line1, line2)
 
 def delete_unused_vms(resource_group):
-    cmd = "/usr/bin/python azure_operations.py list vm -r {} | egrep 'VM Name|VM Status'".format(resource_group)
+    cmd = "/usr/bin/python temp_script.py list vm -r {} | egrep 'VM Name|VM Status'".format(resource_group)
     p = execute_sync(cmd, shell=True)
     if p.returncode == 0:
         # VM Name : zrs00
@@ -64,76 +62,73 @@ def delete_unused_vms(resource_group):
         for vm_info in read_2_lines(p.stdout): 
             vm_name = vm_info[0].split(':')[1].strip()
             vm_state = vm_info[1].split(':')[1].strip()
-            if 'running' not in vm_state and vm_name not in vm_whitelist and 'longrun' not in vm_name.lower():
+            if 'running' not in vm_state and vm_name not in vm_whitelist and 'longrun' not in vm_name.lower() and '-LR' not in vm_name.lower():
                 print 'Deleting VM {}'.format(vm_name)
-                cmd = "/usr/bin/python azure_operations.py delete vm -r {} -n {}".format(resource_group, vm_name)
+                cmd = "/usr/bin/python temp_script.py delete vm -r {} -n {}".format(resource_group, vm_name)
                 _p = execute_sync(cmd, shell=True)
                 if _p.returncode == 0:
                     print 'VM {} successfully deleted.'.format(vm_name)
                 else:
                     raise SystemError('Failed to delete VM {}: {}'.format(vm_name, _p.stderr.readlines()))
-    else:
-        raise SystemError('Fail to get VM info.')
 
-def delete_unused_vhds_per_container(resource_group, storage_account, container):
-    cmd = "/usr/bin/python azure_operations.py list vhd -r {} -s {} -c {}".format(resource_group, storage_account, container)
-    _p = execute_sync(cmd, shell=True)
-    if _p.returncode == 0:
-        if len(_p.stdout.readlines()) == 0:
-            cmd = "/usr/bin/python azure_operations.py delete container -r {} -s {} -n {}".format(resource_group, storage_account, container)
-            _p = execute_sync(cmd, shell=True)
-        # ddvestg/vhds/sushilwin220170301153720.vhd: unlocked/available
-        for line in _p.stdout.readlines():
-            vhd_info = line.split(':')[0]
-            vhd_name = vhd_info.split('/')[2].strip()
-            if vhd_name in vhd_whitelist:
-                print 'vhd {}/{}/{} is neglected'.format(storage_account, container, vhd_name)
-                continue
-            vhd_state = line.split(':')[1].strip()
-            if vhd_state == 'unlocked/available':
-                cmd = "/usr/bin/python azure_operations.py delete blob -r {} -s {} -c {} -n {}".format(resource_group, storage_account, container, vhd_name)
-                print 'Deleting vhd {}/{}/{}'.format(storage_account, container, vhd_name)
-                _p = execute_sync(cmd, shell=True)
-    else:
-        raise SystemError('Failed to get vhd info.')
-
-
-def delete_unused_vhds_per_sa(resource_group, storage_account):
-    cmd = "/usr/bin/python azure_operations.py list container -r {} -s {}".format(resource_group, storage_account)
+def delete_unused_container_per_sa(resource_group, storage_account):
+    cmd = "/usr/bin/python temp_script.py list container -r {} -s {}".format(resource_group, storage_account)
     _p = execute_sync(cmd, shell=True)
     if _p.returncode == 0:
         for container in _p.stdout.readlines():
             container = container.strip()
-            if re.search(r'\w+-\w+-[cdm]0', container):
-                print 'ATOS container {}/{} will be neglected'.format(storage_account, container)
-                continue
             if 'bootdiagnostics-' in container:
-                cmd = "/usr/bin/python azure_operations.py delete container -r {} -s {} -n {}".format(resource_group, storage_account, container)
+                cmd = "/usr/bin/python temp_script.py delete container -r {} -s {} -n {}".format(resource_group, storage_account, container)
                 print 'Deleting storage container {}'.format(container)
                 _p = execute_sync(cmd, shell=True)
-            elif container in container_whitelist:
-                print '{}/{} neglected.'.format(storage_account, container)
-                continue
-            else:
-                delete_unused_vhds_per_container(resource_group, storage_account, container)
-    else:
-            raise SystemError('Failed to get storage container info.')
 
 def delete_unused_vhds(resource_group):
-    cmd = "/usr/bin/python azure_operations.py list storage_account -r {} | grep 'Name'".format(resource_group)
+    cmd = "/usr/bin/python temp_script.py list storage_account -r {} | grep 'Name'".format(resource_group)
     p = execute_sync(cmd, shell=True)
     if p.returncode == 0:
         for sa_info in p.stdout.readlines():
             sa_name = sa_info.split(':')[1].strip()
-            delete_unused_vhds_per_sa(resource_group, sa_name)
-    else:
-        raise SystemError('Failed to get storage account info.')
+            delete_unused_container_per_sa(resource_group, sa_name)
+    
+    cmd = "/usr/bin/python temp_script.py list vhd -r {} | grep 'unlocked/available'".format(resource_group)
+    p = execute_sync(cmd, shell=True)
+    if p.returncode == 0:
+        for disk_info in p.stdout.readlines():
+            disk_uri = disk_info.split(':')[0].strip()
+            disk_path = disk_uri.split('/')
+            if len(disk_path) == 1:
+                sa_name = None 
+                container = None 
+                disk_name = disk_path[0]
+            else:
+                sa_name = disk_path[0]
+                container = disk_path[1]
+                disk_name = disk_path[2]
+            delete_unused_vhd(resource_group, sa_name, container, disk_name)
 
+def delete_unused_vhd(resource_group, storage_account, container, disk_name):
+    if not storage_account and not container:
+        # delete managed disks
+        cmd = "/usr/bin/python temp_script.py delete blob -r {} -n {} --managed_disk".format(resource_group, disk_name)
+        print 'Deleting managed disk {}'.format(disk_name)
+        p = execute_sync(cmd, shell=True)
+        if p.returncode != 0:
+            print 'Failed to delete vhd {} : {}'.format(disk_name, p.stderr.readlines())
+    else:
+        # delete unmanaged disks
+        if disk_name in vhd_whitelist or container in container_whitelist:
+            return
+        cmd = "/usr/bin/python temp_script.py delete blob -r {} -s {} -c {} -n {}".format(resource_group, storage_account, container, disk_name)
+        print 'Deleting vhd {}/{}/{}'.format(storage_account, container, disk_name)
+        p = execute_sync(cmd, shell=True)
+        if p.returncode != 0:
+            print 'Failed to delete vhd {} : {}'.format(disk_name, p.stderr.readlines())
+        
 
 if __name__ == '__main__':
-    # resource_group = 'ddve-dev-rg'
+    #resource_group = 'ddve-dev-rg'
     resource_group = 'solution-test'
-    delete_unused_vms(resource_group)
+    #delete_unused_vms(resource_group)
     delete_unused_nics(resource_group)
     delete_unused_vhds(resource_group)
     

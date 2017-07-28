@@ -4,7 +4,12 @@ from azure.mgmt.resource.resources import ResourceManagementClient
 from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.network import NetworkManagementClient
 from azure.mgmt.storage import StorageManagementClient
-import azure.mgmt.compute.models
+from azure.mgmt.compute.compute.v2016_04_30_preview.models import Plan, HardwareProfile, SshConfiguration
+from azure.mgmt.compute.compute.v2016_04_30_preview.models import SshPublicKey, LinuxConfiguration, OSProfile, ImageReference 
+from azure.mgmt.compute.compute.v2016_04_30_preview.models import VirtualHardDisk, OSDisk, DataDisk, StorageProfile
+from azure.mgmt.compute.compute.v2016_04_30_preview.models import Disk, CreationData, ImageDiskReference, ManagedDiskParameters 
+from azure.mgmt.compute.compute.v2016_04_30_preview.models import NetworkInterfaceReference, NetworkProfile
+from azure.mgmt.compute.compute.v2016_04_30_preview.models import BootDiagnostics, DiagnosticsProfile, VirtualMachine 
 from azure.mgmt.network.models import PublicIPAddress 
 from azure.mgmt.storage.models import Kind, Sku, StorageAccountCreateParameters
 from azure.storage.blob.baseblobservice import BaseBlobService
@@ -207,6 +212,15 @@ class azure_operations:
                 self.list_vhd_per_container(blob_service, sa_ref.name, container.name)
 
     def list_vhds(self, resource_group, storage_account, container):
+        # list all managed disks under this resource group
+        managed_disk_refs = self.compute_client.disks.list_by_resource_group(resource_group)
+        for managed_disk_ref in managed_disk_refs:
+            if managed_disk_ref.owner_id:
+                print '{}: Attached to VM {}'.format(managed_disk_ref.name, 
+                      managed_disk_ref.owner_id.split('/')[-1])
+            else:
+                print '{}: unlocked/available'.format(managed_disk_ref.name)
+
         storage_accounts = self.storage_client.storage_accounts.list_by_resource_group(resource_group)
         if storage_account:
             for sa_ref in storage_accounts:
@@ -215,6 +229,7 @@ class azure_operations:
                 else:
                    continue 
         else:
+            # list unmanaged disks under all storage accounts
             for sa_ref in storage_accounts:
                 self.list_vhd_per_storage_account(resource_group, sa_ref, container)
 
@@ -226,10 +241,13 @@ class azure_operations:
         self.list_vm_state(resource_group, vm_obj.name)
         self.list_vm_public_ip(resource_group, vm_obj.name)
         self.list_vm_private_ip(resource_group, vm_obj.name)
+        # list disks
         os_disk_ref = vm_obj.storage_profile.os_disk
-        if os_disk_ref.vhd:
+        if os_disk_ref:
             print 'VM OS Disk : '
-            print '  {}'.format(os_disk_ref.vhd.uri)
+            if os_disk_ref.vhd:
+                print '  {}'.format(os_disk_ref.vhd.uri)
+            print '  size : {} GiB'.format(os_disk_ref.disk_size_gb)
         data_disk_refs = vm_obj.storage_profile.data_disks
         if data_disk_refs:
             print 'VM Data Disk : '
@@ -238,7 +256,6 @@ class azure_operations:
                     print '  {}'.format(data_disk_ref.vhd.uri)
                 print '  lun : {}'.format(data_disk_ref.lun)
                 print '  size : {} GiB'.format(data_disk_ref.disk_size_gb) 
-            
 
     def list_virtual_machines(self, resource_group, vmname = None, status = None):
         if vmname is None:
@@ -270,7 +287,7 @@ class azure_operations:
                                   expand  
                               ) 
         except Exception as e:
-            virtual_machine = None
+            return None 
         
         return virtual_machine
     
@@ -347,14 +364,18 @@ class azure_operations:
         blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
         blob_service.delete_container(container_name = container)
 
-    def delete_blob(self, resource_group, storage_account, container, blob_name):
-        account_key = self.list_storage_account_primary_key(resource_group, storage_account)
-        blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
-        blob_service.delete_blob(container_name = container, blob_name = blob_name)
-        
-        remaining_blobs = blob_service.list_blobs(container_name = container)
-        if len(list(remaining_blobs)) == 0:
-            delete_container = blob_service.delete_container(container_name = container)
+    def delete_blob(self, resource_group, storage_account, container, blob_name, managed_disk):
+        if not managed_disk:
+            account_key = self.list_storage_account_primary_key(resource_group, storage_account)
+            blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
+            blob_service.delete_blob(container_name = container, blob_name = blob_name)
+            
+            remaining_blobs = blob_service.list_blobs(container_name = container)
+            if len(list(remaining_blobs)) == 0:
+                delete_container = blob_service.delete_container(container_name = container)
+        else:
+            self.compute_client.disks.delete(resource_group, blob_name)
+
 
     def list_data_disks(self, resource_group, vmname):
         virtual_machine = self.get_vm(resource_group, vmname)
@@ -553,15 +574,23 @@ class azure_operations:
                            )
         async_nic_create.wait()
 
-    def create_vm(self, resource_group, storage_account, vm_size, vmname, vnet, subnet_list, ssh_public_key = None, publisher = None, offer = None, sku = None, username = None, password = None, public_ip = False, static_public_ip = False):
+    def get_nic(self, resource_group, nic_name):
+        for nic in self.network_client.network_interfaces.list(resource_group):
+            if nic.name == nic_name:
+                return nic
+
+    def get_location(self, resource_group):
         rg_ref = self.resource_client.resource_groups.get(resource_group)
         if rg_ref is None:
             raise ValueError('The specified resource group {} dose not exist.'.format(resource_group))
         # determine location
         location = rg_ref.location
 
-        if not self.storage_account_within_resource_group(resource_group, storage_account):
-            raise ValueError('Storage account {} not in resource group {}.'.format(storage_account, resource_group))
+        return location
+
+    def create_vm(self, resource_group, storage_account, vm_size, vmname, vnet, subnet_list, ssh_public_key = None, publisher = None, offer = None, sku = None, username = None, password = None, public_ip = False, static_public_ip = False):
+        # determine location
+        location = self.get_location(resource_group) 
 
         # vmname check
         if re.search(r'[^-0-9A-Za-z]', vmname) is not None:
@@ -614,14 +643,21 @@ class azure_operations:
         for subnet in subnets:
             nic_num += 1
             nic_name = vmname + '-nic{}'.format(nic_num) 
-            nic_ref = self.create_nic(resource_group, vnet, subnet.strip(), location, nic_name)
+            #nic_ref = self.create_nic(resource_group, vnet, subnet.strip(), location, nic_name)
+            nic_ref = self.get_nic(resource_group, nic_name)
             nic_id = nic_ref.id
             nic_ids.append(nic_id)
-        
-        # create storage container 
-        container = '{}-vhds'.format(vmname)
-        self.create_storage_container(resource_group, storage_account, container)
        
+        # if storage account is not specified, managed disks will be used
+        if storage_account:
+            if not self.storage_account_within_resource_group(resource_group, storage_account):
+                raise ValueError('Storage account {} not in resource group {}.'.format(storage_account, resource_group))
+            # create storage container 
+            container = '{}-vhds'.format(vmname)
+            self.create_storage_container(resource_group, storage_account, container)
+        else:
+            container = None
+
         # template parameters
         try:
             parameters = self.create_vm_parameters(location = location, storage_account = storage_account,
@@ -630,11 +666,7 @@ class azure_operations:
                               publisher = publisher, offer = offer, sku = sku,
                               username = username, password = password, need_plan = True)
         
-            async_vm_create = self.compute_client.virtual_machines.create_or_update(
-                                  resource_group,
-                                  vmname,
-                                  parameters
-                              )
+            async_vm_create = self.compute_client.virtual_machines.create_or_update(resource_group, vmname, parameters)
             vm = async_vm_create.result()
         except Exception as e:
             if 'User failed validation to purchase resources' in e.message:
@@ -660,10 +692,10 @@ class azure_operations:
                 vm = async_vm_create.result()
             except Exception as e:
                self.delete_vm(resource_group, vmname)
-               for subnet in subnets:
-                   nic_name = vmname + '-nic{}'.format(nic_num)
-                   self.delete_nic(resource_group, nic_name)
-               self.delete_container(resource_group, storage_account, container)
+              # for subnet in subnets:
+              #     nic_name = vmname + '-nic{}'.format(nic_num)
+              #     self.delete_nic(resource_group, nic_name)
+              # self.delete_container(resource_group, storage_account, container)
                print 'Failed to create vm.'
                print '{}'.format(e)
                return
@@ -681,58 +713,71 @@ class azure_operations:
                              nic_ids, ssh_public_key, publisher, offer, sku, username, password, need_plan = True):
         plan = None
         if need_plan:
-            plan = azure.mgmt.compute.models.Plan(name = sku, publisher = publisher, product = offer)
+            plan = Plan(name = sku, publisher = publisher, product = offer)
        
         # hardware profile 
-        hardware_profile = azure.mgmt.compute.models.HardwareProfile(vm_size = vm_size)
+        hardware_profile = HardwareProfile(vm_size = vm_size)
      
         # os profile
         linux_config = None
         if ssh_public_key:
             key_path = '/home/{}/.ssh/authorized_keys'.format(username)
-            public_key = azure.mgmt.compute.models.SshPublicKey(path = key_path, key_data = ssh_public_key)
+            public_key = SshPublicKey(path = key_path, key_data = ssh_public_key)
             public_keys = [public_key]
-            ssh_config = azure.mgmt.compute.models.SshConfiguration(public_keys = public_keys)
-            linux_config = azure.mgmt.compute.models.LinuxConfiguration(disable_password_authentication = False,
+            ssh_config = SshConfiguration(public_keys = public_keys)
+            linux_config = LinuxConfiguration(disable_password_authentication = False,
                            ssh = ssh_config)
-        os_profile = azure.mgmt.compute.models.OSProfile(computer_name = vmname, admin_username = username, 
+        os_profile = OSProfile(computer_name = vmname, admin_username = username, 
                      admin_password = password, linux_configuration = linux_config)
         
-        image_ref = azure.mgmt.compute.models.ImageReference(publisher = publisher, offer = offer,
+        image_ref = ImageReference(publisher = publisher, offer = offer,
                     sku = sku, version = 'latest') 
         
-        # create_option: fromImage, empty, attach  
-        os_vhd_uri = 'https://{}.blob.core.windows.net/{}/{}-os.vhd'.format(storage_account, container, vmname) 
-        os_vhd = azure.mgmt.compute.models.VirtualHardDisk(uri = os_vhd_uri)
-        os_disk_ref = azure.mgmt.compute.models.OSDisk(create_option = 'fromImage', name = 'osDisk', vhd = os_vhd)
-        
-        data_vhd_uri = 'https://{}.blob.core.windows.net/{}/{}-nvram.vhd'.format(storage_account, container, vmname) 
-        data_vhd = azure.mgmt.compute.models.VirtualHardDisk(uri = data_vhd_uri)
-        data_disk_ref = azure.mgmt.compute.models.DataDisk(lun = 0, disk_size_gb = 10, create_option = 'fromImage', name = 'nvramDisk', vhd = data_vhd)
-        data_disk_refs = [data_disk_ref]
-        
-        storage_profile = azure.mgmt.compute.models.StorageProfile(image_reference = image_ref, os_disk = os_disk_ref,
-                          data_disks = data_disk_refs)
+        # create_option: fromImage, empty, attach 
+        # use unmanaged disks
+        if storage_account:
+            os_vhd_uri = 'https://{}.blob.core.windows.net/{}/{}-os.vhd'.format(storage_account, container, vmname) 
+            os_vhd = VirtualHardDisk(uri = os_vhd_uri)
+            os_disk_ref = OSDisk(create_option = 'fromImage', name = 'osDisk', vhd = os_vhd)
+            
+            data_vhd_uri = 'https://{}.blob.core.windows.net/{}/{}-nvram.vhd'.format(storage_account, container, vmname) 
+            data_vhd = VirtualHardDisk(uri = data_vhd_uri)
+            data_disk_ref = DataDisk(lun = 0, disk_size_gb = 10, create_option = 'fromImage', name = 'nvramDisk', vhd = data_vhd)
+            data_disk_refs = [data_disk_ref]
+            
+            storage_profile = StorageProfile(image_reference = image_ref, os_disk = os_disk_ref,
+                              data_disks = data_disk_refs)
+        # use managed disks
+        else:
+            disk_name = '{}-nvramDisk'.format(vmname)
+            data_disk_ref = DataDisk(lun = 0, disk_size_gb = 10, create_option = 'fromImage', 
+                    name = disk_name, managed_disk = ManagedDiskParameters())
+            data_disk_refs = [data_disk_ref]
+            storage_profile = StorageProfile(image_reference = image_ref, data_disks = data_disk_refs)
+
         # network profile
         nic_list = []
         primary_nic = True 
         for nic_id in nic_ids:
             if primary_nic:
-                nic_ref = azure.mgmt.compute.models.NetworkInterfaceReference(id = nic_id, primary = True)
+                nic_ref = NetworkInterfaceReference(id = nic_id, primary = True)
                 primary_nic = False
             else:
-                nic_ref = azure.mgmt.compute.models.NetworkInterfaceReference(id = nic_id, primary = False)
+                nic_ref = NetworkInterfaceReference(id = nic_id, primary = False)
             nic_list.append(nic_ref)
       
-        network_profile = azure.mgmt.compute.models.NetworkProfile(network_interfaces = nic_list)
+        network_profile = NetworkProfile(network_interfaces = nic_list)
 
         # dianostic profile
-        storage_uri = 'https://{}.blob.core.windows.net'.format(storage_account)
-        boot_diagnostics = azure.mgmt.compute.models.BootDiagnostics(enabled = True, storage_uri = storage_uri)
-        diagnostics_profile = azure.mgmt.compute.models.DiagnosticsProfile(boot_diagnostics = boot_diagnostics) 
+        if storage_account:
+            storage_uri = 'https://{}.blob.core.windows.net'.format(storage_account)
+            boot_diagnostics = BootDiagnostics(enabled = True, storage_uri = storage_uri)
+            diagnostics_profile = DiagnosticsProfile(boot_diagnostics = boot_diagnostics) 
+        else:
+            diagnostics_profile = None
 
         # build template_params 
-        vm_create_params = azure.mgmt.compute.models.VirtualMachine(
+        vm_create_params = VirtualMachine(
                            plan = plan,
                            location = location,
                            os_profile = os_profile,
@@ -763,15 +808,9 @@ class azure_operations:
         # last start the vm 
         self.start_vm(resource_group, vmname)
 
-    def attach_data_disk(self, resource_group, vmname, disk_name, disk_size, existing = None):
-        if (int(disk_size) < 1):
-            disk_size = 1
-        elif (int(disk_size) > 1023):
-            disk_size = 1023
-
-        vm = self.get_vm(resource_group, vmname)
+    def attach_unmanaged_disk(self, vm_obj, disk_name, disk_size, available_lun, existing = None):
         #make sure data disks are put under the same container with the os disk_name
-        os_disk = vm.storage_profile.os_disk
+        os_disk = vm_obj.storage_profile.os_disk
         disk_uri = os_disk.vhd.uri
         disk_uri = disk_uri[0:disk_uri.rfind('/')]
 
@@ -781,33 +820,75 @@ class azure_operations:
         else:
             create_opt = 'empty'
             disk_uri = '{}/{}.vhd'.format(disk_uri, disk_name)
+        
+        vm_obj.storage_profile.data_disks.append(
+            DataDisk(lun = available_lun, name = disk_name, disk_size_gb = disk_size,
+                vhd = {
+                    'uri': disk_uri 
+                },
+                create_option = create_opt
+            )
+        )
+        async_vm_update = self.compute_client.virtual_machines.create_or_update(
+            resource_group, vmname, vm_obj)
+        async_vm_update.wait()
+    
+    def attach_managed_disk(self, resource_group, vm_obj, disk_name, disk_size, available_lun, existing = None):
+        if not existing:
+            create_opt = 'empty'
+           
+            location = self.get_location(resource_group)
+            async_create = self.compute_client.disks.create_or_update(
+                resource_group, disk_name, 
+                {
+                    'location': location,
+                    'disk_size_gb': disk_size,
+                    'creation_data': {
+                        'create_option': 'empty'
+                    }
+                })
+            managed_disk_ref = async_create.result()
+        else:
+            create_opt = 'attach'
+            managed_disk_ref = self.compute_client.disks.get(resource_group, existing)
+            
+        vm_obj.storage_profile.data_disks.append({
+            'lun': available_lun,
+            'name': managed_disk_ref.name,
+            'create_option': 'attach',
+            'managed_disk': {
+                'id': managed_disk_ref.id
+            }
+        })
+        async_vm_update = self.compute_client.virtual_machines.create_or_update(
+            resource_group, vmname, vm_obj)
+        async_vm_update.wait()
 
+
+    def attach_data_disk(self, resource_group, vmname, disk_name, disk_size, existing = None):
+        if (int(disk_size) < 1):
+            disk_size = 1
+        elif (int(disk_size) > 1023):
+            disk_size = 1023
+
+        vm = self.get_vm(resource_group, vmname)
+        if not vm:
+            raise ValueError('The specified VM {} does not exist.'.format(vmname))
+        
         data_disks = vm.storage_profile.data_disks
         #find an available lun
         used_luns = []
         for data_disk in data_disks:
             used_luns.append(data_disk.lun)
-        for i in range(100):
+        for i in xrange(100):
             if i not in used_luns:
                 available_lun = i
                 break
 
-        data_disks.append(azure.mgmt.compute.models.DataDisk(
-                       lun = available_lun,
-                       name = disk_name, 
-                       disk_size_gb = disk_size,
-                       vhd = {
-                           'uri': disk_uri 
-                           },
-                       create_option = create_opt
-                       )
-                  )
-        async_vm_update = self.compute_client.virtual_machines.create_or_update(
-                               resource_group,
-                               vmname,
-                               vm
-                          )
-        async_vm_update.wait()
+        if managed_disk:
+            self.attach_managed_disk(resource_group, vm_obj, disk_name, disk_size, available_lun, existing)
+        else:
+            self.attach_unmanaged_disk(vm_obj, disk_name, disk_size, available_lun, existing)
 
     def get_vm_state(self, resource_group, vmname):
         vm = self.compute_client.virtual_machines.get_with_instance_view(resource_group, vmname).virtual_machine
@@ -934,7 +1015,7 @@ class arg_parse:
         # create vm
         create_vm = create_subparser.add_parser('vm', help='create a vm within a resource group')
         create_vm.add_argument('-r', '--resource_group', required=True, help='create a vm wihtin this resource group')
-        create_vm.add_argument('-s', '--storage_account', required=True, help='create a vm wiht this storage account')
+        create_vm.add_argument('-s', '--storage_account', help='create a vm wiht this storage account')
         create_vm.add_argument('-c', '--vm_size', required=True, help='create a vm with this size')
         create_vm.add_argument('-n', '--name', required=True, help='create a vm with this name')
         create_vm.add_argument('-v', '--vnet', required=True, help='create a vm with this vnet')
@@ -1017,13 +1098,14 @@ class arg_parse:
         delete_container.add_argument('-r', '--resource_group', required=True, help='delete a container within this group')
         delete_container.add_argument('-n', '--name', required=True, help='delete a container with this name')
         delete_container.set_defaults(func=self.delete_storage_container)
-        # delete a page blob 
+        # delete a blob 
         delete_blob = delete_subparser.add_parser('blob', help='delete a blob within a storage account')
-        delete_blob.add_argument('-r', '--resource_group', required=True, help='delete a page blob within this group')
-        delete_blob.add_argument('-s', '--storage_account', required=True, help='delete a page blob within this storage account')
-        delete_blob.add_argument('-c', '--container', required=True, help='delete a page blob within this container')
+        delete_blob.add_argument('-r', '--resource_group', required=True, help='delete a blob within this group')
+        delete_blob.add_argument('-s', '--storage_account', help='delete a blob within this storage account')
+        delete_blob.add_argument('-c', '--container', help='delete a blob within this container')
         delete_blob.add_argument('-n', '--name', required=True, help='delete a blob with this name')
-        delete_blob.set_defaults(func=self.delete_page_blob)
+        delete_blob.add_argument('--managed_disk', action='store_true', help='delete a managed disk')
+        delete_blob.set_defaults(func=self.delete_blob)
 
     def add_start_subcommands(self):
         # start subcommand
@@ -1067,6 +1149,7 @@ class arg_parse:
         attach_disk.add_argument('-d', '--disk_name', required=True, help='attach a disk with this name')
         attach_disk.add_argument('-g', '--disk_size', required=True, help='attach a disk with this size in GiB')
         attach_disk.add_argument('-e', '--existing', help='attach an existing disk')
+        attach_disk.add_argument('--managed_disk', action='store_true', help='attach a managed disk')
         attach_disk.set_defaults(func=self.attach_disk_to_vm)
 
     def add_detach_subcommands(self):
@@ -1127,8 +1210,8 @@ class arg_parse:
     def delete_storage_container(self, args):
         self.azure_ops.delete_container(args.resource_group, args.storage_account, args.name)
     
-    def delete_page_blob(self, args):
-        self.azure_ops.delete_blob(args.resource_group, args.storage_account, args.container, args.name)
+    def delete_blob(self, args):
+        self.azure_ops.delete_blob(args.resource_group, args.storage_account, args.container, args.name, args.managed_disk)
     
     def delete_virtual_machine(self, args):
         self.azure_ops.delete_vm(args.resource_group, args.name, args.keep_data)
@@ -1180,7 +1263,7 @@ class arg_parse:
         self.azure_ops.list_blobs(args.resource_group, args.storage_account, args.container)
     
     def attach_disk_to_vm(self, args):
-        self.azure_ops.attach_data_disk(args.resource_group, args.name, args.disk_name, args.disk_size, args.existing)
+        self.azure_ops.attach_data_disk(args.resource_group, args.name, args.disk_name, args.disk_size, args.existing, args.managed_disk)
     
     def detach_disk_from_vm(self, args):
         self.azure_ops.detach_data_disk(args.resource_group, args.name, args.disk_name)
