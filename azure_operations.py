@@ -671,10 +671,11 @@ class azure_operations:
         for subnet in subnets:
             nic_num += 1
             nic_name = vmname + '-nic{}'.format(nic_num) 
-            #nic_ref = self.create_nic(resource_group, vnet, subnet.strip(), location, nic_name)
-            nic_ref = self.get_nic(resource_group, nic_name)
-            nic_id = nic_ref.id
-            nic_ids.append(nic_id)
+            nic_ref = self.create_nic(resource_group, vnet, subnet.strip(), location, nic_name)
+            #nic_ref = self.get_nic(resource_group, nic_name)
+            if not nic_ref:
+                raise SystemError('Failed to create NIC')
+            nic_ids.append(nic_ref.id)
        
         # if storage account is not specified, managed disks will be used
         if storage_account:
@@ -694,7 +695,8 @@ class azure_operations:
                               publisher = publisher, offer = offer, sku = sku,
                               username = username, password = password, need_plan = True)
         
-            async_vm_create = self.compute_client.virtual_machines.create_or_update(resource_group, vmname, parameters)
+            async_vm_create = self.compute_client.virtual_machines.create_or_update(resource_group, 
+                                  vmname, parameters)
             vm = async_vm_create.result()
         except Exception as e:
             if 'User failed validation to purchase resources' in e.message:
@@ -712,11 +714,8 @@ class azure_operations:
                               publisher = publisher, offer = offer, sku = sku,
                               username = username, password = password, need_plan = False)
             try:
-                async_vm_create = self.compute_client.virtual_machines.create_or_update(
-                                      resource_group,
-                                      vmname,
-                                      parameters
-                                  )
+                async_vm_create = self.compute_client.virtual_machines.create_or_update(resource_group,
+                                      vmname, parameters)
                 vm = async_vm_create.result()
             except Exception as e:
                self.delete_vm(resource_group, vmname)

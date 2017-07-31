@@ -1,6 +1,7 @@
 import os
 import subprocess
 import re
+import argparse
 
 vm_whitelist = []
 container_whitelist = ['ddvevhds', 'templates']
@@ -137,14 +138,14 @@ def delete_unused_public_ips(resource_group):
                 print 'Failed to delete public ip {} : {}'.format(public_ip_name, p.stderr.readlines())
 
 
-
-
 if __name__ == '__main__':
-    resource_group = 'ddve-dev-rg'
-    #resource_group = 'solution-test'
-    delete_unused_vms(resource_group)
-    delete_unused_nics(resource_group)
-    delete_unused_vhds(resource_group)
-    delete_unused_public_ips(resource_group)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-r', '--resource_group', required = True, help='delete resources from this group')
+    parsed_args = parser.parse_args()
+
+    #delete_unused_vms(parsed_args.resource_group)
+    delete_unused_nics(parsed_args.resource_group)
+    delete_unused_vhds(parsed_args.resource_group)
+    delete_unused_public_ips(parsed_args.resource_group)
     
 
