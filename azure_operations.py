@@ -4,12 +4,11 @@ from azure.mgmt.resource.resources import ResourceManagementClient
 from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.network import NetworkManagementClient
 from azure.mgmt.storage import StorageManagementClient
-from azure.mgmt.compute.compute.v2016_04_30_preview.models import Plan, HardwareProfile, SshConfiguration
-from azure.mgmt.compute.compute.v2016_04_30_preview.models import SshPublicKey, LinuxConfiguration, OSProfile, ImageReference 
-from azure.mgmt.compute.compute.v2016_04_30_preview.models import VirtualHardDisk, OSDisk, DataDisk, StorageProfile
-from azure.mgmt.compute.compute.v2016_04_30_preview.models import Disk, CreationData, ImageDiskReference, ManagedDiskParameters 
-from azure.mgmt.compute.compute.v2016_04_30_preview.models import NetworkInterfaceReference, NetworkProfile
-from azure.mgmt.compute.compute.v2016_04_30_preview.models import BootDiagnostics, DiagnosticsProfile, VirtualMachine 
+from azure.mgmt.compute.models import Plan, HardwareProfile, SshConfiguration
+from azure.mgmt.compute.models import SshPublicKey, LinuxConfiguration, OSProfile, ImageReference 
+from azure.mgmt.compute.models import VirtualHardDisk, OSDisk, DataDisk, StorageProfile, ManagedDiskParameters 
+from azure.mgmt.compute.models import NetworkInterfaceReference, NetworkProfile
+from azure.mgmt.compute.models import BootDiagnostics, DiagnosticsProfile, VirtualMachine 
 from azure.mgmt.network.models import PublicIPAddress 
 from azure.mgmt.storage.models import Kind, Sku, StorageAccountCreateParameters
 from azure.storage.blob.baseblobservice import BaseBlobService
@@ -152,11 +151,7 @@ class azure_operations:
             raise ValueError(valid_name.message)
 
         param = StorageAccountCreateParameters(sku = Sku(replication_type), kind = account_kind, location = location, access_tier = access_tier)  
-        async_sa_create = self.storage_client.storage_accounts.create(
-                              resource_group,
-                              sa_name,
-                              param
-                          )
+        async_sa_create = self.storage_client.storage_accounts.create(resource_group, sa_name, param)
         async_sa_create.wait()
 
     def delete_storage_account(self, resource_group, sa_name):
@@ -699,15 +694,6 @@ class azure_operations:
                                   vmname, parameters)
             vm = async_vm_create.result()
         except Exception as e:
-            if 'User failed validation to purchase resources' in e.message:
-               for subnet in subnets:
-                   nic_name = vmname + '-nic{}'.format(nic_num)
-                   self.delete_nic(resource_group, nic_name)
-               self.delete_container(resource_group, storage_account, container)
-               print 'Failed to create vm.'
-               print '{}'.format(e)
-               return
-
             parameters = self.create_vm_parameters(location = location, storage_account = storage_account, 
                               container = container, vm_size = vm_size, vmname = vmname, 
                               nic_ids = nic_ids, ssh_public_key = ssh_public_key, 
@@ -718,14 +704,14 @@ class azure_operations:
                                       vmname, parameters)
                 vm = async_vm_create.result()
             except Exception as e:
-               self.delete_vm(resource_group, vmname)
-              # for subnet in subnets:
-              #     nic_name = vmname + '-nic{}'.format(nic_num)
-              #     self.delete_nic(resource_group, nic_name)
-              # self.delete_container(resource_group, storage_account, container)
-               print 'Failed to create vm.'
-               print '{}'.format(e)
-               return
+                for subnet in subnets:
+                    nic_name = vmname + '-nic{}'.format(nic_num)
+                    self.delete_nic(resource_group, nic_name)
+                if storage_account:
+                    self.delete_container(resource_group, storage_account, container)
+                print 'Failed to create vm.'
+                print '{}'.format(e)
+                return
                  
         # add a public ip if needed
         if public_ip:
