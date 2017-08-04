@@ -63,7 +63,7 @@ def delete_unused_vms(resource_group):
         for vm_info in read_2_lines(p.stdout): 
             vm_name = vm_info[0].split(':')[1].strip()
             vm_state = vm_info[1].split(':')[1].strip()
-            if 'running' not in vm_state and vm_name not in vm_whitelist and 'longrun' not in vm_name.lower() and '-LR' not in vm_name.lower():
+            if 'running' not in vm_state and vm_name not in vm_whitelist and 'longrun' not in vm_name.lower() and '-lr' not in vm_name.lower():
                 print 'Deleting VM {}'.format(vm_name)
                 cmd = "/usr/bin/python azure_operations.py delete vm -r {} -n {}".format(resource_group, vm_name)
                 _p = execute_sync(cmd, shell=True)
@@ -143,7 +143,7 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--resource_group', required = True, help='delete resources from this group')
     parsed_args = parser.parse_args()
 
-    #delete_unused_vms(parsed_args.resource_group)
+    delete_unused_vms(parsed_args.resource_group)
     delete_unused_nics(parsed_args.resource_group)
     delete_unused_vhds(parsed_args.resource_group)
     delete_unused_public_ips(parsed_args.resource_group)
