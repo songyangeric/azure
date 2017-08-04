@@ -13,8 +13,13 @@ from azure.mgmt.network.models import PublicIPAddress
 from azure.mgmt.storage.models import Kind, Sku, StorageAccountCreateParameters
 from azure.storage.blob.baseblobservice import BaseBlobService
 
-# set logging leve
-logging.basicConfig(level=logging.INFO, format='%(message)s')
+# set logging level
+logger = logging.getLogger('Logging')
+logger.setLevel(logging.INFO)
+# stream handler
+sh = logging.StreamHandler(stream = sys.stdout)
+sh.setFormatter(logging.Formatter(fmt = '%(message)s'))
+logger.addHandler(sh)
 
 # VM size and capacity mapping
 supported_vm_sizes = {
@@ -74,20 +79,20 @@ class azure_operations:
 
 
     def print_storage_account_info(self, sa):
-        logging.info('')
-        logging.info('\tName: {}'.format(sa.name))
+        logger.info('')
+        logger.info('\tName: {}'.format(sa.name))
         kind = str(sa.kind)
         kind = kind.split('.')[1]
-        logging.info('\tKind: {}'.format(kind))
+        logger.info('\tKind: {}'.format(kind))
         replication = str(sa.sku.name).split('.')[1] 
-        logging.info('\tReplication: {}'.format(replication))
-        logging.info('\tLocation: {}'.format(sa.location))
+        logger.info('\tReplication: {}'.format(replication))
+        logger.info('\tLocation: {}'.format(sa.location))
 
     def list_resource_groups(self):
         for rg in self.resource_client.resource_groups.list():
-            logging.info('') 
-            logging.info('\tName: {}'.format(item.name))
-            logging.info('\tLocation: {}'.format(item.location))
+            logger.info('') 
+            logger.info('\tName: {}'.format(item.name))
+            logger.info('\tLocation: {}'.format(item.location))
 
     def create_resource_group(self, rg_name, location):
         async_create = self.resource_client.resource_groups.create_or_update(
@@ -178,18 +183,18 @@ class azure_operations:
         blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
         containers = blob_service.list_containers()
         for container in containers:
-            logging.info(container.name)
+            logger.info(container.name)
 
     def list_vhd_per_container(self, blob_service, storage_account, container):
         blobs = blob_service.list_blobs(container_name = container)
         for blob in blobs:
             if re.search(r'\.vhd', blob.name):
-                logging.info('{}/{}/{}: {}/{}'.format(storage_account, container, blob.name, 
+                logger.info('{}/{}/{}: {}/{}'.format(storage_account, container, blob.name, 
                        blob.properties.lease.status, blob.properties.lease.state))
 
     def list_vhd_per_storage_account(self, resource_group, sa_ref, container):
         if sa_ref.kind == Kind.blob_storage:
-            logging.debug('Listing VHD operations will neglect Blob storage account.')
+            logger.debug('Listing VHD operations will neglect Blob storage account.')
             return
 
         account_key = self.list_storage_account_primary_key(resource_group, sa_ref.name)
@@ -207,10 +212,10 @@ class azure_operations:
         managed_disk_refs = self.compute_client.disks.list_by_resource_group(resource_group)
         for managed_disk_ref in managed_disk_refs:
             if managed_disk_ref.owner_id:
-                logging.info('{}: Attached to VM {}'.format(managed_disk_ref.name, 
+                logger.info('{}: Attached to VM {}'.format(managed_disk_ref.name, 
                       managed_disk_ref.owner_id.split('/')[-1]))
             else:
-                logging.info('{}: unlocked/available'.format(managed_disk_ref.name))
+                logger.info('{}: unlocked/available'.format(managed_disk_ref.name))
 
         storage_accounts = self.storage_client.storage_accounts.list_by_resource_group(resource_group)
         if storage_account:
@@ -225,28 +230,28 @@ class azure_operations:
                 self.list_vhd_per_storage_account(resource_group, sa_ref, container)
 
     def print_vm_info(self, resource_group, vm_obj):
-        logging.info('')
-        logging.info('VM UUID : {}'.format(vm_obj.vm_id))
-        logging.info('VM Name : {}'.format(vm_obj.name))
-        logging.info('VM Size : {}'.format(vm_obj.hardware_profile.vm_size))
+        logger.info('')
+        logger.info('VM UUID : {}'.format(vm_obj.vm_id))
+        logger.info('VM Name : {}'.format(vm_obj.name))
+        logger.info('VM Size : {}'.format(vm_obj.hardware_profile.vm_size))
         self.list_vm_state(resource_group, vm_obj.name)
         self.list_vm_public_ip(resource_group, vm_obj.name)
         self.list_vm_private_ip(resource_group, vm_obj.name)
         # list disks
         os_disk_ref = vm_obj.storage_profile.os_disk
         if os_disk_ref:
-            logging.info('VM OS Disk : ')
+            logger.info('VM OS Disk : ')
             if os_disk_ref.vhd:
-                logging.info('  {}'.format(os_disk_ref.vhd.uri))
-            logging.info('  size : {} GiB'.format(os_disk_ref.disk_size_gb))
+                logger.info('  {}'.format(os_disk_ref.vhd.uri))
+            logger.info('  size : {} GiB'.format(os_disk_ref.disk_size_gb))
         data_disk_refs = vm_obj.storage_profile.data_disks
         if data_disk_refs:
-            logging.info('VM Data Disk : ')
+            logger.info('VM Data Disk : ')
             for data_disk_ref in data_disk_refs:
                 if data_disk_ref.vhd:
-                    logging.info('  {}'.format(data_disk_ref.vhd.uri))
-                logging.info('  lun : {}'.format(data_disk_ref.lun))
-                logging.info('  size : {} GiB'.format(data_disk_ref.disk_size_gb))
+                    logger.info('  {}'.format(data_disk_ref.vhd.uri))
+                logger.info('  lun : {}'.format(data_disk_ref.lun))
+                logger.info('  size : {} GiB'.format(data_disk_ref.disk_size_gb))
 
     def list_virtual_machines(self, resource_group, vmname = None, status = None):
         if vmname is None:
@@ -259,7 +264,7 @@ class azure_operations:
     def list_vm_size(self, resource_group, vmname):
         vm = self.get_vm(resource_group, vmname)
         vm_size = vm.hardware_profile.vm_size
-        logging.info('VM Size : {}'.format(vm_size))
+        logger.info('VM Size : {}'.format(vm_size))
         
     def list_vm_state(self, resource_group, vmname):
         vm = self.get_vm(resource_group, vmname)
@@ -267,7 +272,7 @@ class azure_operations:
         # VM may not be successfully deployed in below case
         if state == 'Provisioning succeeded':
             state = vm.instance_view.statuses[1].display_status
-        logging.info('VM Status : {}'.format(state))
+        logger.info('VM Status : {}'.format(state))
         return state
 
     def get_vm(self, resource_group, vmname, expand = 'instanceview'):
@@ -395,11 +400,11 @@ class azure_operations:
         data_disks = virtual_machine.storage_profile.data_disks
         data_disks[:] = [disk for disk in data_disks if 'nvram' not in disk.name.lower()]
         for disk in data_disks:
-            logging.info('')
-            logging.info('LUN : {}'.format(disk.lun))
-            logging.info('Disk name : {}'.format(disk.name))
-            logging.info('VHD : {}'.format(disk.vhd.uri))
-            logging.info('Disk size in GiB: {}'.format(disk.disk_size_gb))
+            logger.info('')
+            logger.info('LUN : {}'.format(disk.lun))
+            logger.info('Disk name : {}'.format(disk.name))
+            logger.info('VHD : {}'.format(disk.vhd.uri))
+            logger.info('Disk size in GiB: {}'.format(disk.disk_size_gb))
 
     def detach_data_disk(self, resource_group, vmname, disk_name):
         virtual_machine = self.get_vm(resource_group, vmname)
@@ -440,8 +445,8 @@ class azure_operations:
 
     def list_subnetworks(self, resource_group, vnet):
         for subnet in self.network_client.subnets.list(resource_group, vnet):
-            logging.info('') 
-            logging.info('\tName: %s' % subnet.name)
+            logger.info('') 
+            logger.info('\tName: %s' % subnet.name)
 
     def create_subnet(self, resource_group, vnet_name, subnet_name, addr_prefix = "10.0.0.0/24"):
         async_subnet_create = self.network_client.subnets.create_or_update(
@@ -473,13 +478,13 @@ class azure_operations:
                 private_ip = '{}{} : Attached to VM {}'.format(subnet_group, private_ip_addr, attached_vm.id.split('/')[8])
             else:
                 private_ip = '{}{} :  Available'.format(subnet_group, private_ip_addr)
-            logging.info(private_ip)
+            logger.info(private_ip)
 
     def list_public_ip(self, resource_group):
             public_ips = self.network_client.public_ip_addresses.list(resource_group)
             for public_ip in public_ips:
                 public_ip_name = public_ip.id.split('/')[-1]
-                logging.info('{} : {}'.format(public_ip_name, public_ip.ip_address))
+                logger.info('{} : {}'.format(public_ip_name, public_ip.ip_address))
 
     def list_vm_public_ip(self, resource_group, vmname, nic_names = None):
         if nic_names is None:
@@ -499,7 +504,7 @@ class azure_operations:
             if public_ip.ip_address:
                 public_ips.append(public_ip.ip_address)
         
-        logging.info('VM Public IP : {}'.format(','.join(public_ips)))
+        logger.info('VM Public IP : {}'.format(','.join(public_ips)))
 
     def list_vm_private_ip(self, resource_group, vmname, nic_names = None):
         if nic_names is None:
@@ -516,7 +521,7 @@ class azure_operations:
             private_ip = '{}{}'.format(subnet_group, private_ip_addr)
             private_ips.append(private_ip)
 
-        logging.info('VM Private IP :\n {}'.format(','.join(private_ips)))
+        logger.info('VM Private IP :\n {}'.format(','.join(private_ips)))
 
     def create_nic(self, resource_group, vnet, subnet, location, nic_name):
         subnet_ref = self.network_client.subnets.get(resource_group, vnet, subnet)
@@ -720,8 +725,8 @@ class azure_operations:
                     self.delete_nic(resource_group, nic_name)
                 if storage_account:
                     self.delete_container(resource_group, storage_account, container)
-                logging.error('Failed to create vm.')
-                logging.error('{}'.format(e))
+                logger.error('Failed to create vm.')
+                logger.error('{}'.format(e))
                 return
                  
         # add a public ip if needed
@@ -1332,4 +1337,4 @@ if __name__ == '__main__':
         ops = arg_parse()
         ops.run_cmd()
     except Exception as e:
-        logging.error('{}'.format(e))
+        logger.error('{}'.format(e))
