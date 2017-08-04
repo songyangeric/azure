@@ -1,4 +1,4 @@
-import sys, os, argparse, json, re
+import sys, os, argparse, json, re, logging
 from azure.common.credentials import ServicePrincipalCredentials
 from azure.mgmt.resource.resources import ResourceManagementClient
 from azure.mgmt.compute import ComputeManagementClient
@@ -12,6 +12,9 @@ from azure.mgmt.compute.models import BootDiagnostics, DiagnosticsProfile, Virtu
 from azure.mgmt.network.models import PublicIPAddress 
 from azure.mgmt.storage.models import Kind, Sku, StorageAccountCreateParameters
 from azure.storage.blob.baseblobservice import BaseBlobService
+
+# set logging leve
+logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 # VM size and capacity mapping
 supported_vm_sizes = {
@@ -69,29 +72,22 @@ class azure_operations:
         else:
             raise ValueError('No subscription specified, please check or create a new one') 
 
-    def print_item(self, item):
-        print '' 
-        print '\tName: %s' % item.name
-        print '\tId: %s' % item.id
-        print '\tLocation: %s' % item.location
 
     def print_storage_account_info(self, sa):
-        print ''
-        print '\tName: {}'.format(sa.name)
+        logging.info('')
+        logging.info('\tName: {}'.format(sa.name))
         kind = str(sa.kind)
         kind = kind.split('.')[1]
-        print '\tKind: {}'.format(kind)
+        logging.info('\tKind: {}'.format(kind))
         replication = str(sa.sku.name).split('.')[1] 
-        print '\tReplication: {}'.format(replication)
-        print '\tLocation: {}'.format(sa.location)
+        logging.info('\tReplication: {}'.format(replication))
+        logging.info('\tLocation: {}'.format(sa.location))
 
     def list_resource_groups(self):
         for rg in self.resource_client.resource_groups.list():
-            self.print_item(rg)
-
-    def list_resources(self, resource_group):
-        for resource in self.resource_client.resource_groups.list_resources(resource_group):
-            self.print_item(resource)       
+            logging.info('') 
+            logging.info('\tName: {}'.format(item.name))
+            logging.info('\tLocation: {}'.format(item.location))
 
     def create_resource_group(self, rg_name, location):
         async_create = self.resource_client.resource_groups.create_or_update(
@@ -182,18 +178,18 @@ class azure_operations:
         blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
         containers = blob_service.list_containers()
         for container in containers:
-            print container.name
+            logging.info(container.name)
 
     def list_vhd_per_container(self, blob_service, storage_account, container):
         blobs = blob_service.list_blobs(container_name = container)
         for blob in blobs:
             if re.search(r'\.vhd', blob.name):
-                print '{}/{}/{}: {}/{}'.format(storage_account, container, blob.name, 
-                       blob.properties.lease.status, blob.properties.lease.state)
+                logging.info('{}/{}/{}: {}/{}'.format(storage_account, container, blob.name, 
+                       blob.properties.lease.status, blob.properties.lease.state))
 
     def list_vhd_per_storage_account(self, resource_group, sa_ref, container):
         if sa_ref.kind == Kind.blob_storage:
-            print 'Listing VHD operations will neglect Blob storage account.'
+            logging.debug('Listing VHD operations will neglect Blob storage account.')
             return
 
         account_key = self.list_storage_account_primary_key(resource_group, sa_ref.name)
@@ -211,10 +207,10 @@ class azure_operations:
         managed_disk_refs = self.compute_client.disks.list_by_resource_group(resource_group)
         for managed_disk_ref in managed_disk_refs:
             if managed_disk_ref.owner_id:
-                print '{}: Attached to VM {}'.format(managed_disk_ref.name, 
-                      managed_disk_ref.owner_id.split('/')[-1])
+                logging.info('{}: Attached to VM {}'.format(managed_disk_ref.name, 
+                      managed_disk_ref.owner_id.split('/')[-1]))
             else:
-                print '{}: unlocked/available'.format(managed_disk_ref.name)
+                logging.info('{}: unlocked/available'.format(managed_disk_ref.name))
 
         storage_accounts = self.storage_client.storage_accounts.list_by_resource_group(resource_group)
         if storage_account:
@@ -229,28 +225,28 @@ class azure_operations:
                 self.list_vhd_per_storage_account(resource_group, sa_ref, container)
 
     def print_vm_info(self, resource_group, vm_obj):
-        print ''
-        print 'VM UUID : {}'.format(vm_obj.vm_id)
-        print 'VM Name : {}'.format(vm_obj.name)
-        print 'VM Size : {}'.format(vm_obj.hardware_profile.vm_size)
+        logging.info('')
+        logging.info('VM UUID : {}'.format(vm_obj.vm_id))
+        logging.info('VM Name : {}'.format(vm_obj.name))
+        logging.info('VM Size : {}'.format(vm_obj.hardware_profile.vm_size))
         self.list_vm_state(resource_group, vm_obj.name)
         self.list_vm_public_ip(resource_group, vm_obj.name)
         self.list_vm_private_ip(resource_group, vm_obj.name)
         # list disks
         os_disk_ref = vm_obj.storage_profile.os_disk
         if os_disk_ref:
-            print 'VM OS Disk : '
+            logging.info('VM OS Disk : ')
             if os_disk_ref.vhd:
-                print '  {}'.format(os_disk_ref.vhd.uri)
-            print '  size : {} GiB'.format(os_disk_ref.disk_size_gb)
+                logging.info('  {}'.format(os_disk_ref.vhd.uri))
+            logging.info('  size : {} GiB'.format(os_disk_ref.disk_size_gb))
         data_disk_refs = vm_obj.storage_profile.data_disks
         if data_disk_refs:
-            print 'VM Data Disk : '
+            logging.info('VM Data Disk : ')
             for data_disk_ref in data_disk_refs:
                 if data_disk_ref.vhd:
-                    print '  {}'.format(data_disk_ref.vhd.uri)
-                print '  lun : {}'.format(data_disk_ref.lun)
-                print '  size : {} GiB'.format(data_disk_ref.disk_size_gb) 
+                    logging.info('  {}'.format(data_disk_ref.vhd.uri))
+                logging.info('  lun : {}'.format(data_disk_ref.lun))
+                logging.info('  size : {} GiB'.format(data_disk_ref.disk_size_gb))
 
     def list_virtual_machines(self, resource_group, vmname = None, status = None):
         if vmname is None:
@@ -263,7 +259,7 @@ class azure_operations:
     def list_vm_size(self, resource_group, vmname):
         vm = self.get_vm(resource_group, vmname)
         vm_size = vm.hardware_profile.vm_size
-        print 'VM Size : {}'.format(vm_size)
+        logging.info('VM Size : {}'.format(vm_size))
         
     def list_vm_state(self, resource_group, vmname):
         vm = self.get_vm(resource_group, vmname)
@@ -271,7 +267,7 @@ class azure_operations:
         # VM may not be successfully deployed in below case
         if state == 'Provisioning succeeded':
             state = vm.instance_view.statuses[1].display_status
-        print 'VM Status : {}'.format(state)
+        logging.info('VM Status : {}'.format(state))
         return state
 
     def get_vm(self, resource_group, vmname, expand = 'instanceview'):
@@ -399,11 +395,11 @@ class azure_operations:
         data_disks = virtual_machine.storage_profile.data_disks
         data_disks[:] = [disk for disk in data_disks if 'nvram' not in disk.name.lower()]
         for disk in data_disks:
-            print ''
-            print 'LUN : {}'.format(disk.lun)
-            print 'Disk name : {}'.format(disk.name)
-            print 'VHD : {}'.format(disk.vhd.uri)
-            print 'Disk size in GiB: {}'.format(disk.disk_size_gb)
+            logging.info('')
+            logging.info('LUN : {}'.format(disk.lun))
+            logging.info('Disk name : {}'.format(disk.name))
+            logging.info('VHD : {}'.format(disk.vhd.uri))
+            logging.info('Disk size in GiB: {}'.format(disk.disk_size_gb))
 
     def detach_data_disk(self, resource_group, vmname, disk_name):
         virtual_machine = self.get_vm(resource_group, vmname)
@@ -444,9 +440,8 @@ class azure_operations:
 
     def list_subnetworks(self, resource_group, vnet):
         for subnet in self.network_client.subnets.list(resource_group, vnet):
-            print '' 
-            print '\tName: %s' % subnet.name
-            print '\tId: %s' % subnet.id
+            logging.info('') 
+            logging.info('\tName: %s' % subnet.name)
 
     def create_subnet(self, resource_group, vnet_name, subnet_name, addr_prefix = "10.0.0.0/24"):
         async_subnet_create = self.network_client.subnets.create_or_update(
@@ -478,13 +473,13 @@ class azure_operations:
                 private_ip = '{}{} : Attached to VM {}'.format(subnet_group, private_ip_addr, attached_vm.id.split('/')[8])
             else:
                 private_ip = '{}{} :  Available'.format(subnet_group, private_ip_addr)
-            print private_ip
+            logging.info(private_ip)
 
     def list_public_ip(self, resource_group):
             public_ips = self.network_client.public_ip_addresses.list(resource_group)
             for public_ip in public_ips:
                 public_ip_name = public_ip.id.split('/')[-1]
-                print '{} : {}'.format(public_ip_name, public_ip.ip_address)
+                logging.info('{} : {}'.format(public_ip_name, public_ip.ip_address))
 
     def list_vm_public_ip(self, resource_group, vmname, nic_names = None):
         if nic_names is None:
@@ -504,7 +499,7 @@ class azure_operations:
             if public_ip.ip_address:
                 public_ips.append(public_ip.ip_address)
         
-        print 'VM Public IP : {}'.format(','.join(public_ips))
+        logging.info('VM Public IP : {}'.format(','.join(public_ips)))
 
     def list_vm_private_ip(self, resource_group, vmname, nic_names = None):
         if nic_names is None:
@@ -521,7 +516,7 @@ class azure_operations:
             private_ip = '{}{}'.format(subnet_group, private_ip_addr)
             private_ips.append(private_ip)
 
-        print 'VM Private IP :\n {}'.format(','.join(private_ips))
+        logging.info('VM Private IP :\n {}'.format(','.join(private_ips)))
 
     def create_nic(self, resource_group, vnet, subnet, location, nic_name):
         subnet_ref = self.network_client.subnets.get(resource_group, vnet, subnet)
@@ -634,10 +629,6 @@ class azure_operations:
         if sku is None and image is None:
             raise ValueError('Either SKU or customized image must be specified.')
 
-        # when sku is specified, customized image will not be used
-        if sku and image:
-            image = None
-
         # default username
         if username is None:
             username = 'sysadmin'
@@ -665,8 +656,19 @@ class azure_operations:
             if subnet_ref is None:
                 raise ValueError('Subnet {} does not exist.'.format(subnet))
             
+        # if customized image used, the storage account where customized image located will be used
+        if image:
+            sa_pat = re.compile('\s?https://(?P<storage_account>\w+)\..*')
+            grp = sa_pat.search(image)
+            if grp:
+                storage_account = grp.group('storage_account')
+            else:
+                raise ValueError('Invalid VHD Uri')
+            # create storage container 
+            container = '{}-vhds'.format(vmname)
+            self.create_storage_container(resource_group, storage_account, container)
         # if storage account is not specified, managed disks will be used
-        if storage_account and sku:
+        elif storage_account:
             if not self.storage_account_within_resource_group(resource_group, storage_account):
                 raise ValueError('Storage account {} not in resource group {}.'.format(storage_account, resource_group))
             # create storage container 
@@ -674,17 +676,6 @@ class azure_operations:
             self.create_storage_container(resource_group, storage_account, container)
         else:
             container = None
-            # if customized image used, the storage account where customized is will be used
-            if image:
-                sa_pat = re.compile('\s?https://(?P<storage_account>\w+)\..*')
-                grp = sa_pat.search(image)
-                if grp:
-                    storage_account = grp.group('storage_account')
-                else:
-                    raise ValueError('Invalid VHD Uri')
-                # create storage container 
-                container = '{}-vhds'.format(vmname)
-                self.create_storage_container(resource_group, storage_account, container)
 
         # create nic
         nic_num = 0 
@@ -699,53 +690,38 @@ class azure_operations:
             nic_ids.append(nic_ref.id)
        
         # template parameters
-        if not image:
-            try:
-                parameters = self.create_vm_parameters(location = location, storage_account = storage_account,
-                                 container = container, vm_size = vm_size, vmname = vmname, 
-                                 nic_ids = nic_ids, ssh_public_key = ssh_public_key, 
-                                 publisher = publisher, offer = offer, sku = sku, image = None,
-                                 username = username, password = password, need_plan = True)
+        try:
+            parameters = self.create_vm_parameters(location = location, storage_account = storage_account,
+                             container = container, vm_size = vm_size, vmname = vmname, 
+                             nic_ids = nic_ids, ssh_public_key = ssh_public_key, 
+                             publisher = publisher, offer = offer, sku = sku, image = image,
+                             username = username, password = password)
             
-                async_vm_create = self.compute_client.virtual_machines.create_or_update(resource_group, 
+            # try to deploy vm with a Plan
+            if publisher and offer and sku:
+                plan = Plan(name = sku, publisher = publisher, product = offer)
+                parameters.plan = plan 
+            else:
+                parameters.plan = None 
+
+            async_vm_create = self.compute_client.virtual_machines.create_or_update(resource_group, 
+                                  vmname, parameters)
+            vm = async_vm_create.result()
+        except Exception as e:
+            # then try to deploy vm without a Plan
+            parameters.plan = None 
+            try:
+                async_vm_create = self.compute_client.virtual_machines.create_or_update(resource_group,
                                       vmname, parameters)
                 vm = async_vm_create.result()
-            except Exception as e:
-                parameters = self.create_vm_parameters(location = location, storage_account = storage_account, 
-                                 container = container, vm_size = vm_size, vmname = vmname, 
-                                 nic_ids = nic_ids, ssh_public_key = ssh_public_key, 
-                                 publisher = publisher, offer = offer, sku = sku, image = None,
-                                 username = username, password = password, need_plan = False)
-                try:
-                    async_vm_create = self.compute_client.virtual_machines.create_or_update(resource_group,
-                                          vmname, parameters)
-                    vm = async_vm_create.result()
-                except Exception as ee:
-                    for subnet in subnets:
-                        nic_name = vmname + '-nic{}'.format(nic_num)
-                        self.delete_nic(resource_group, nic_name)
-                    if storage_account:
-                        self.delete_container(resource_group, storage_account, container)
-                    print 'Failed to create vm.'
-                    print '{}'.format(e)
-                    return
-        else:
-            try: 
-                parameters = self.create_vm_parameters(location = location, storage_account = storage_account, 
-                                 container = container, vm_size = vm_size, vmname = vmname,
-                                 nic_ids = nic_ids, ssh_public_key = ssh_public_key, publisher = None,
-                                 offer = offer, sku = None, image = image, username = username,
-                                 password = password, need_plan = False)
-                async_vm_create = self.compute_client.virtual_machines.create_or_update(resource_group, 
-                                      vmname, parameters)
-                vm = async_vm_create.result()
-            except Exception as e:
+            except Exception:
                 for subnet in subnets:
                     nic_name = vmname + '-nic{}'.format(nic_num)
                     self.delete_nic(resource_group, nic_name)
-                self.delete_container(resource_group, storage_account, container)
-                print 'Failed to create vm.'
-                print '{}'.format(e)
+                if storage_account:
+                    self.delete_container(resource_group, storage_account, container)
+                logging.error('Failed to create vm.')
+                logging.error('{}'.format(e))
                 return
                  
         # add a public ip if needed
@@ -759,10 +735,7 @@ class azure_operations:
 
     def create_vm_parameters(self, location, storage_account, container, vm_size, vmname, 
                              nic_ids, ssh_public_key, publisher, offer, sku, image, username, 
-                             password, need_plan = True):
-        plan = None
-        if need_plan:
-            plan = Plan(name = sku, publisher = publisher, product = offer)
+                             password):
        
         # hardware profile 
         hardware_profile = HardwareProfile(vm_size = vm_size)
@@ -780,11 +753,13 @@ class azure_operations:
                      admin_password = password, linux_configuration = linux_config)
       
         image_ref = None
-        if not image:
+        if publisher and offer and sku:
             image_ref = ImageReference(publisher = publisher, offer = offer, sku = sku, version = 'latest') 
         
-        # create_option: fromImage, empty, attach 
-        if not image:
+        # create_option: fromImage, empty, attach
+        # for ddve, data disk will be created 'fromImage' if publisher/offer/sku specified
+        # otherwise data disk will be created empty
+        if not image and offer == 'dell-emc-datadomain-virtual-edition':
             create_opt = 'fromImage'
         else:
             create_opt = 'empty'
@@ -804,11 +779,7 @@ class azure_operations:
                 data_disk_ref = DataDisk(lun = 0, disk_size_gb = 10, create_option = create_opt, name = 'nvramDisk', vhd = data_vhd)
                 data_disk_refs = [data_disk_ref]
             
-            if data_disk_refs:
-                storage_profile = StorageProfile(image_reference = image_ref, os_disk = os_disk_ref,
-                              data_disks = data_disk_refs)
-            else:
-                storage_profile = StorageProfile(image_reference = image_ref, os_disk = os_disk_ref)
+            storage_profile = StorageProfile(image_reference = image_ref, os_disk = os_disk_ref, data_disks = data_disk_refs)
         # use managed disks
         else:
             data_disk_refs = None
@@ -843,7 +814,6 @@ class azure_operations:
 
         # build template_params 
         vm_create_params = VirtualMachine(
-                           plan = plan,
                            location = location,
                            os_profile = os_profile,
                            hardware_profile = hardware_profile,
@@ -933,8 +903,8 @@ class azure_operations:
     def attach_data_disk(self, resource_group, vmname, disk_name, disk_size, existing = None, managed_disk = False):
         if (int(disk_size) < 1):
             disk_size = 1
-        elif (int(disk_size) > 1023):
-            disk_size = 1023
+        elif (int(disk_size) > 4093):
+            disk_size = 4093
 
         vm = self.get_vm(resource_group, vmname)
         if not vm:
@@ -992,6 +962,14 @@ class arg_parse:
         self.add_detach_subcommands()
         
         self.parsed_args = self.parser.parse_args()
+
+        # for creating vms, publisher/offer/sku conflict with customized image
+        try:
+            if self.parsed_args.image: 
+                if self.parsed_args.publisher or self.parsed_args.offer or self.parsed_args.sku:
+                    raise ValueError('publiser/offer/sku cannot be specified together with customized image')
+        except AttributeError:
+            pass
         
         self.azure_ops = azure_operations(self.parsed_args.client_id, self.parsed_args.secret_key, self.parsed_args.tenant_id, self.parsed_args.subscription_id)
        
@@ -1354,4 +1332,4 @@ if __name__ == '__main__':
         ops = arg_parse()
         ops.run_cmd()
     except Exception as e:
-        print '{}'.format(e)
+        logging.error('{}'.format(e))
