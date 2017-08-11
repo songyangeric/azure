@@ -211,9 +211,9 @@ class azure_operations:
         # list all managed disks under this resource group
         managed_disk_refs = self.compute_client.disks.list_by_resource_group(resource_group)
         for managed_disk_ref in managed_disk_refs:
-            if managed_disk_ref.owner_id:
+            if managed_disk_ref.managed_by:
                 logger.info('{}: Attached to VM {}'.format(managed_disk_ref.name, 
-                      managed_disk_ref.owner_id.split('/')[-1]))
+                      managed_disk_ref.managed_by.split('/')[-1]))
             else:
                 logger.info('{}: unlocked/available'.format(managed_disk_ref.name))
 
@@ -908,8 +908,8 @@ class azure_operations:
     def attach_data_disk(self, resource_group, vmname, disk_name, disk_size, existing = None, managed_disk = False):
         if (int(disk_size) < 1):
             disk_size = 1
-        elif (int(disk_size) > 4093):
-            disk_size = 4093
+        elif (int(disk_size) > 4095):
+            disk_size = 4095
 
         vm = self.get_vm(resource_group, vmname)
         if not vm:
@@ -1338,3 +1338,4 @@ if __name__ == '__main__':
         ops.run_cmd()
     except Exception as e:
         logger.error('{}'.format(e))
+        return -1
