@@ -667,6 +667,7 @@ class azure_operations:
             grp = sa_pat.search(image)
             if grp:
                 storage_account = grp.group('storage_account')
+                logger.warning('Use the storage account specified by customized image.')
             else:
                 raise ValueError('Invalid VHD Uri')
             # create storage container 
@@ -968,14 +969,6 @@ class arg_parse:
         
         self.parsed_args = self.parser.parse_args()
 
-        # for creating vms, publisher/offer/sku conflict with customized image
-        try:
-            if self.parsed_args.image: 
-                if self.parsed_args.publisher or self.parsed_args.offer or self.parsed_args.sku:
-                    raise ValueError('publiser/offer/sku cannot be specified together with customized image')
-        except AttributeError:
-            pass
-        
         self.azure_ops = azure_operations(self.parsed_args.client_id, self.parsed_args.secret_key, self.parsed_args.tenant_id, self.parsed_args.subscription_id)
        
         self.parsed_args.func(self.parsed_args)
@@ -1299,6 +1292,11 @@ class arg_parse:
         self.azure_ops.create_nic(args.resource_group, args.vnet, args.subnet, args.location, args.name)
     
     def create_virtual_machine(self, args):
+        # for creating vms, publisher/offer/sku conflict with customized image
+        if args.image: 
+            if self.parsed_args.publisher or self.parsed_args.offer or self.parsed_args.sku:
+                raise ValueError('publiser/offer/sku cannot be specified together with customized image')
+                
         self.azure_ops.create_vm(args.resource_group, args.storage_account, args.vm_size, args.name, args.vnet, args.subnet, args.ssh_key, args.publisher, args.offer, args.sku, args.image, args.username, args.password, args.public_ip, args.static_ip)
     
     def create_public_ip(self, args):
@@ -1338,4 +1336,3 @@ if __name__ == '__main__':
         ops.run_cmd()
     except Exception as e:
         logger.error('{}'.format(e))
-        return -1
