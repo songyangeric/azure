@@ -4,7 +4,7 @@ from azure.mgmt.resource.resources import ResourceManagementClient
 from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.network import NetworkManagementClient
 from azure.mgmt.storage import StorageManagementClient
-from azure.mgmt.compute.models import Plan, HardwareProfile, SshConfiguration
+from azure.mgmt.compute.models import Plan, HardwareProfile, SshConfiguration, VirtualMachineSize
 from azure.mgmt.compute.models import SshPublicKey, LinuxConfiguration, OSProfile, ImageReference 
 from azure.mgmt.compute.models import VirtualHardDisk, OSDisk, DataDisk, StorageProfile, ManagedDiskParameters 
 from azure.mgmt.compute.models import NetworkInterfaceReference, NetworkProfile
@@ -233,7 +233,13 @@ class azure_operations:
         logger.info('')
         logger.info('VM UUID : {}'.format(vm_obj.vm_id))
         logger.info('VM Name : {}'.format(vm_obj.name))
+        logger.info('VM Location : {}'.format(vm_obj.location))
         logger.info('VM Size : {}'.format(vm_obj.hardware_profile.vm_size))
+        
+        vm_size_obj = self.get_vm_size(vm_obj.location, vm_obj.hardware_profile.vm_size)
+        logger.info('CPU cores : {}'.format(vm_size_obj.number_of_cores))
+        logger.info('Memory size : {} GB'.format(vm_size_obj.memory_in_mb/1024))
+
         self.list_vm_state(resource_group, vm_obj.name)
         self.list_vm_public_ip(resource_group, vm_obj.name)
         self.list_vm_private_ip(resource_group, vm_obj.name)
@@ -419,9 +425,29 @@ class azure_operations:
                           )
         async_vm_update.wait()
 
-    def list_virtual_networks(self, resource_group):
-        for vnet in self.network_client.virtual_networks.list(resource_group):
-            self.print_item(vnet)
+    def print_vnet_info(self, vnet_obj):
+         logger.info('')
+         logger.info('Name : {}'.format(vnet_obj.name))
+         logger.info('Location : {}'.format(vnet_obj.location))
+         logger.info('AddressSpace : {}'.format(''.join(vnet_obj.address_space.address_prefixes)))
+
+    def list_virtual_networks(self, resource_group = None, vnet_name = None):
+        if resource_group:
+            if vnet_name:
+                try:
+                    vnet = self.network_client.virtual_networks.get(resource_group, vnet_name)
+                except Exception as e:
+                    logger.error(e.message)
+                    vnet = None
+                if vnet:
+                    self.print_vnet_info(vnet)
+            else:
+                for vnet in self.network_client.virtual_networks.list(resource_group):
+                    self.print_vnet_info(vnet)
+        else:
+            for vnet in self.network_client.virtual_networks.list_all():
+                self.print_vnet_info(vnet)
+
 
     def create_vnet(self, resource_group, location, vnet_name, addr_prefix = "10.0.0.0/16"):
         async_vnet_create = self.network_client.virtual_networks.create_or_update(
@@ -443,10 +469,37 @@ class azure_operations:
                             )
         async_vnet_delete.wait()
 
-    def list_subnetworks(self, resource_group, vnet):
-        for subnet in self.network_client.subnets.list(resource_group, vnet):
-            logger.info('') 
-            logger.info('\tName: %s' % subnet.name)
+    def print_subnet_info(self, subnet_obj):
+        logger.info('')
+        logger.info('Name: {}'.format(subnet_obj.name))
+        logger.info('VNet: {}'.format(str(subnet_obj.id.split('/')[8])))
+        logger.info('AddressSpace: {}'.format(subnet_obj.address_prefix))
+
+    def get_subnet_info(self, resource_group, vnet, subnet = None):
+        if subnet:
+            try:
+                subnet_obj = self.network_client.subnets.get(resource_group, vnet, subnet)
+            except Exception as e:
+                logger.error(e.message)
+                subnet_obj = None
+            if subnet_obj:
+                self.print_subnet_info(subnet_obj)
+        else:
+            for subnet in self.network_client.subnets.list(resource_group, vnet):
+                self.print_subnet_info(subnet)
+
+    def list_subnetworks(self, resource_group = None, vnet = None, subnet = None):
+        if not resource_group:
+            for vnet in self.network_client.virtual_networks.list_all():
+                resource_group = str(vnet.id.split('/')[4])
+                vnet_name = vnet.name
+                self.get_subnet_info(resource_group, vnet_name)
+        elif not vnet:
+            for vnet in self.network_client.virtual_networks.list(resource_group):
+                vnet_name = vnet.name
+                self.get_subnet_info(resource_group, vnet_name)
+        else:
+             self.get_subnet_info(resource_group, vnet, subnet)
 
     def create_subnet(self, resource_group, vnet_name, subnet_name, addr_prefix = "10.0.0.0/24"):
         async_subnet_create = self.network_client.subnets.create_or_update(
@@ -524,7 +577,7 @@ class azure_operations:
         logger.info('VM Private IP :\n {}'.format(','.join(private_ips)))
 
     def create_nic(self, resource_group, vnet, subnet, location, nic_name):
-        subnet_ref = self.network_client.subnets.get(resource_group, vnet, subnet)
+        subnet_ref = self.get_subnet_by_vnet(location, vnet, subnet)
         if subnet_ref is None:
             raise ValueError("The specified subnet does not exist.")
 
@@ -611,9 +664,39 @@ class azure_operations:
 
         return location
 
-    def create_vm(self, resource_group, storage_account, vm_size, vmname, vnet, subnet_list, ssh_public_key = None, publisher = None, offer = None, sku = None, image = None, username = None, password = None, public_ip = False, static_public_ip = False):
+    def get_vm_size(self, location, size):
+        for vm_size in self.compute_client.virtual_machine_sizes.list(location):
+            if vm_size.name == size:
+                return vm_size
+        return None
+
+    def get_vnet_by_location(self, location, vnet_name):
+        for vnet in self.network_client.virtual_networks.list_all():
+            if vnet.location == location and vnet.name == vnet_name:
+                return vnet
+        return None
+
+    def get_subnet_by_vnet(self, location, vnet_name, subnet_name):
+        vnet_obj = self.get_vnet_by_location(location, vnet_name)
+        if vnet_obj:
+            resource_group = str(vnet_obj.id.split('/')[4])
+            try:
+                subnet_ref = self.network_client.subnets.get(resource_group, vnet_name, subnet_name)
+                return subnet_ref
+            except:
+                return None
+        return None
+
+    def get_storage_account_by_location(self, location, storage_account):
+        for sa in self.storage_client.storage_accounts.list():
+            if sa.name == storage_account and sa.location == location:
+                return sa
+        return None
+
+    def create_vm(self, resource_group, storage_account, location, vm_size, vmname, vnet, subnet_list, ssh_public_key = None, publisher = None, offer = None, sku = None, image = None, username = None, password = None, public_ip = False, static_public_ip = False):
         # determine location
-        location = self.get_location(resource_group) 
+        if not location:
+            location = self.get_location(resource_group) 
 
         # vmname check
         if re.search(r'[^-0-9A-Za-z]', vmname) is not None:
@@ -648,17 +731,23 @@ class azure_operations:
                 raise ValueError('Wrong capacity {} provided.'.format(vm_size))
             else:
                 vm_size = supported_vm_sizes[vm_size.upper()]
+        else:
+            # check whether this size of VM exists in this location
+            vm_size_obj = self.get_vm_size(location, vm_size)
+            if not vm_size_obj:
+                raise ValueError('VM size {} does not exist in {}'.format(vm_size, location))
 
         # vnet check
-        vnet_ref = self.network_client.virtual_networks.get(resource_group, vnet)
-        if vnet_ref is None:
-            raise ValueError('Virtual network {} does not exist.'.format(vnet))
+        #vnet_ref = self.network_client.virtual_networks.get(resource_group, vnet)
+        vnet_ref = self.get_vnet_by_location(location, vnet)
+        if not vnet_ref:
+            raise ValueError('Virtual network {} does not exist in location {}.'.format(vnet, location))
        
         # subnets check
         subnets = subnet_list.split(',')
         for subnet in subnets:
-            subnet_ref = self.network_client.subnets.get(resource_group, vnet, subnet.strip())
-            if subnet_ref is None:
+            subnet_ref = self.get_subnet_by_vnet(location, vnet, subnet.strip())
+            if not subnet_ref:
                 raise ValueError('Subnet {} does not exist.'.format(subnet))
             
         # if customized image used, the storage account where customized image located will be used
@@ -670,13 +759,11 @@ class azure_operations:
                 logger.warning('Use the storage account specified by customized image.')
             else:
                 raise ValueError('Invalid VHD Uri')
-            # create storage container 
-            container = '{}-vhds'.format(vmname)
-            self.create_storage_container(resource_group, storage_account, container)
+        
         # if storage account is not specified, managed disks will be used
-        elif storage_account:
-            if not self.storage_account_within_resource_group(resource_group, storage_account):
-                raise ValueError('Storage account {} not in resource group {}.'.format(storage_account, resource_group))
+        if storage_account:
+            if not self.get_storage_account_by_location(location, storage_account):
+                raise ValueError('Storage account {} not in location {}.'.format(storage_account, location))
             # create storage container 
             container = '{}-vhds'.format(vmname)
             self.create_storage_container(resource_group, storage_account, container)
@@ -877,8 +964,10 @@ class azure_operations:
     def attach_managed_disk(self, resource_group, vm_obj, disk_name, disk_size, available_lun, existing = None):
         if not existing:
             create_opt = 'empty'
-           
-            location = self.get_location(resource_group)
+
+            # use the same location where the vm is 
+            location = vm_obj.location
+            
             async_create = self.compute_client.disks.create_or_update(
                 resource_group, disk_name, 
                 {
@@ -998,12 +1087,14 @@ class arg_parse:
         list_vm.set_defaults(func=self.list_virtual_machines)
         # list vnets
         list_vnet = list_subparser.add_parser('vnet', help='list vnets within a resource group')
-        list_vnet.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
+        list_vnet.add_argument('-r', '--resource_group', help='list resources wihtin this group')
+        list_vnet.add_argument('-n', '--name', help='list resources wihtin this group')
         list_vnet.set_defaults(func=self.list_virtual_networks)
         # list subnets
         list_subnet = list_subparser.add_parser('subnet', help='list subnets within a resource group')
-        list_subnet.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
-        list_subnet.add_argument('-v', '--vnet', required=True, help='list resources wihtin this vnet')
+        list_subnet.add_argument('-r', '--resource_group',help='list resources wihtin this group')
+        list_subnet.add_argument('-v', '--vnet', help='list resources within this vnet')
+        list_subnet.add_argument('-n', '--name', help='list subnet info')
         list_subnet.set_defaults(func=self.list_subnetworks)
         # list nics
         list_nic = list_subparser.add_parser('nic', help='list nics within a resource group')
@@ -1060,7 +1151,8 @@ class arg_parse:
         # create vm
         create_vm = create_subparser.add_parser('vm', help='create a vm within a resource group')
         create_vm.add_argument('-r', '--resource_group', required=True, help='create a vm wihtin this resource group')
-        create_vm.add_argument('-s', '--storage_account', help='create a vm wiht this storage account')
+        create_vm.add_argument('-s', '--storage_account', help='create a vm with this storage account')
+        create_vm.add_argument('-l', '--location', help='create a vm within this location')
         create_vm.add_argument('-c', '--vm_size', required=True, help='create a vm with this size')
         create_vm.add_argument('-n', '--name', required=True, help='create a vm with this name')
         create_vm.add_argument('-v', '--vnet', required=True, help='create a vm with this vnet')
@@ -1228,10 +1320,12 @@ class arg_parse:
         self.azure_ops.list_virtual_machines(args.resource_group, args.name)
     
     def list_virtual_networks(self, args):
-        self.azure_ops.list_virtual_networks(args.resource_group)
+        self.azure_ops.list_virtual_networks(args.resource_group, args.name)
     
     def list_subnetworks(self, args):
-        self.azure_ops.list_subnetworks(args.resource_group, args.vnet)
+        if not args.resource_group:
+            logger.debug('All subnets will be listed as resource group not specified.')
+        self.azure_ops.list_subnetworks(args.resource_group, args.vnet, args.name)
     
     def list_network_interfaces(self, args):
         self.azure_ops.list_network_interfaces(args.resource_group)
@@ -1297,7 +1391,7 @@ class arg_parse:
             if self.parsed_args.publisher or self.parsed_args.offer or self.parsed_args.sku:
                 raise ValueError('publiser/offer/sku cannot be specified together with customized image')
                 
-        self.azure_ops.create_vm(args.resource_group, args.storage_account, args.vm_size, args.name, args.vnet, args.subnet, args.ssh_key, args.publisher, args.offer, args.sku, args.image, args.username, args.password, args.public_ip, args.static_ip)
+        self.azure_ops.create_vm(args.resource_group, args.storage_account, args.location, args.vm_size, args.name, args.vnet, args.subnet, args.ssh_key, args.publisher, args.offer, args.sku, args.image, args.username, args.password, args.public_ip, args.static_ip)
     
     def create_public_ip(self, args):
         self.azure_ops.create_public_ip(args.resource_group, args.name, args.static)
