@@ -161,24 +161,31 @@ class azure_operations:
                               sa_name
                           )
 
-    def list_storage_account_primary_key(self, resource_group, storage_account):
+    def get_resource_group_by_storage_account(self, storage_account):
+        for sa in self.storage_client.storage_accounts.list():
+            if sa.name == storage_account:
+                return sa.id.split('/')[4]
+
+    def list_storage_account_primary_key(self, storage_account, resource_group = None):
+        if not resource_group:
+            resource_group = self.get_resource_group_by_storage_account(storage_account)
         storage_account_keys = self.storage_client.storage_accounts.list_keys(resource_group, storage_account)
         storage_account_keys_map = {v.key_name: v.value for v in storage_account_keys.keys}
         storage_account_primary_key = storage_account_keys_map['key1']
         
         return storage_account_primary_key
 
-    def create_storage_container(self, resource_group, storage_account, container):
+    def create_storage_container(self, storage_account, container, resource_group = None):
         if re.search(r'[^-0-9a-z]', container) is not None: 
             raise ValueError('Invalid container name. Only '-', small letters and digits are allowed.')
 
-        account_key = self.list_storage_account_primary_key(resource_group, storage_account)
+        account_key = self.list_storage_account_primary_key(storage_account, resource_group)
 
         blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
         create_container = blob_service.create_container(container_name = container)
 
-    def list_storage_container(self, resource_group, storage_account):
-        account_key = self.list_storage_account_primary_key(resource_group, storage_account)
+    def list_storage_container(self, storage_account):
+        account_key = self.list_storage_account_primary_key(storage_account)
 
         blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
         containers = blob_service.list_containers()
@@ -197,7 +204,7 @@ class azure_operations:
             logger.debug('Listing VHD operations will neglect Blob storage account.')
             return
 
-        account_key = self.list_storage_account_primary_key(resource_group, sa_ref.name)
+        account_key = self.list_storage_account_primary_key(sa_ref.name, resource_group)
 
         blob_service = BaseBlobService(account_name = sa_ref.name ,account_key = account_key)
         if container:
@@ -208,25 +215,29 @@ class azure_operations:
                 self.list_vhd_per_container(blob_service, sa_ref.name, container.name)
 
     def list_vhds(self, resource_group, storage_account, container):
-        # list all managed disks under this resource group
-        managed_disk_refs = self.compute_client.disks.list_by_resource_group(resource_group)
-        for managed_disk_ref in managed_disk_refs:
-            if managed_disk_ref.managed_by:
-                logger.info('{}: Attached to VM {}'.format(managed_disk_ref.name, 
-                      managed_disk_ref.managed_by.split('/')[-1]))
-            else:
-                logger.info('{}: unlocked/available'.format(managed_disk_ref.name))
+        if resource_group:
+            # list all managed disks under this resource group
+            managed_disk_refs = self.compute_client.disks.list_by_resource_group(resource_group)
+            for managed_disk_ref in managed_disk_refs:
+                if managed_disk_ref.managed_by:
+                    logger.info('{}: Attached to VM {}'.format(managed_disk_ref.name, 
+                          managed_disk_ref.managed_by.split('/')[-1]))
+                else:
+                    logger.info('{}: unlocked/available'.format(managed_disk_ref.name))
 
-        storage_accounts = self.storage_client.storage_accounts.list_by_resource_group(resource_group)
+            storage_accounts = self.storage_client.storage_accounts.list_by_resource_group(resource_group)
+        else:
+            storage_accounts = self.storage_client.storage_accounts.list()
+            
         if storage_account:
             for sa_ref in storage_accounts:
                 if storage_account == sa_ref.name:
+                    resource_group = sa_ref.id.split('/')[4]
                     self.list_vhd_per_storage_account(resource_group, sa_ref, container)
-                else:
-                   continue 
         else:
             # list unmanaged disks under all storage accounts
             for sa_ref in storage_accounts:
+                resource_group = sa_ref.id.split('/')[4]
                 self.list_vhd_per_storage_account(resource_group, sa_ref, container)
 
     def print_vm_info(self, resource_group, vm_obj):
@@ -249,15 +260,24 @@ class azure_operations:
             logger.info('VM OS Disk : ')
             if os_disk_ref.vhd:
                 logger.info('  {}'.format(os_disk_ref.vhd.uri))
-            logger.info('  size : {} GiB'.format(os_disk_ref.disk_size_gb))
+            if os_disk_ref.disk_size_gb:
+                logger.info('  size : {} GiB'.format(os_disk_ref.disk_size_gb))
+            elif os_disk_ref.vhd:
+                disk_size_gb = self.get_disk_size(os_disk_ref.vhd.uri)
+                logger.info('  size : {} GiB'.format(disk_size_gb))
+
         data_disk_refs = vm_obj.storage_profile.data_disks
         if data_disk_refs:
             logger.info('VM Data Disk : ')
             for data_disk_ref in data_disk_refs:
+                logger.info('  lun : {}'.format(data_disk_ref.lun))
                 if data_disk_ref.vhd:
                     logger.info('  {}'.format(data_disk_ref.vhd.uri))
-                logger.info('  lun : {}'.format(data_disk_ref.lun))
-                logger.info('  size : {} GiB'.format(data_disk_ref.disk_size_gb))
+                if data_disk_ref.disk_size_gb:
+                    logger.info('  size : {} GiB'.format(data_disk_ref.disk_size_gb))
+                elif data_disk_ref.vhd:
+                    disk_size_gb = self.get_disk_size(data_disk_ref.vhd.uri)
+                    logger.info('  size : {} GiB'.format(disk_size_gb))
 
     def list_virtual_machines(self, resource_group, vmname = None, status = None):
         if vmname is None:
@@ -270,8 +290,11 @@ class azure_operations:
     def list_vm_size(self, resource_group, vmname):
         vm = self.get_vm(resource_group, vmname)
         vm_size = vm.hardware_profile.vm_size
+        vm_size_ref = self.get_vm_size(vm.location, vm_size)
         logger.info('VM Size : {}'.format(vm_size))
-        
+        logger.info('CPU cores : {}'.format(vm_size_ref.number_of_cores))
+        logger.info('Memory size : {} GB'.format(vm_size_ref.memory_in_mb/1024))
+
     def list_vm_state(self, resource_group, vmname):
         vm = self.get_vm(resource_group, vmname)
         state = vm.instance_view.statuses[0].display_status
@@ -381,14 +404,14 @@ class azure_operations:
     
                 self.delete_blob(resource_group, data_disk_storage_account_name, data_disk_container, data_disk_blob_name, managed_disk)
  
-    def delete_container(self, resource_group, storage_account, container):
-        account_key = self.list_storage_account_primary_key(resource_group, storage_account)
+    def delete_container(self, storage_account, container):
+        account_key = self.list_storage_account_primary_key(storage_account)
         blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
         blob_service.delete_container(container_name = container)
 
-    def delete_blob(self, resource_group, storage_account, container, blob_name, managed_disk = False):
+    def delete_blob(self, storage_account, container, blob_name, managed_disk = False):
         if not managed_disk:
-            account_key = self.list_storage_account_primary_key(resource_group, storage_account)
+            account_key = self.list_storage_account_primary_key(storage_account)
             blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
             blob_service.delete_blob(container_name = container, blob_name = blob_name)
             
@@ -398,6 +421,18 @@ class azure_operations:
         else:
             self.compute_client.disks.delete(resource_group, blob_name)
 
+    def get_disk_size(self, disk_uri):
+        #https://ddvestg.blob.core.windows.net/aimee-atos-test-cbj3zksbhkgme-vhds/aimee-atos-test-20170809-105218.vhd
+        disk_info = disk_uri.split('/')
+        storage_account = disk_info[2].split('.')[0]
+        container = disk_info[-2]
+        disk_name = disk_info[-1]
+
+        account_key = self.list_storage_account_primary_key(storage_account)
+        blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
+        disk_size = blob_service.get_blob_properties(container, disk_name).properties.content_length/1024/1024/1024
+
+        return disk_size
 
     def list_data_disks(self, resource_group, vmname):
         virtual_machine = self.get_vm(resource_group, vmname)
@@ -409,8 +444,13 @@ class azure_operations:
             logger.info('')
             logger.info('LUN : {}'.format(disk.lun))
             logger.info('Disk name : {}'.format(disk.name))
-            logger.info('VHD : {}'.format(disk.vhd.uri))
-            logger.info('Disk size in GiB: {}'.format(disk.disk_size_gb))
+            if disk.vhd:
+                logger.info('VHD : {}'.format(disk.vhd.uri))
+            if disk.disk_size_gb:
+                logger.info('Disk size : {} GiB'.format(disk.disk_size_gb))
+            else:
+                disk_size_gb = self.get_disk_size(resource_group, disk.vhd.uri) 
+                logger.info('Disk size : {} GiB'.format(disk_size_gb))
 
     def detach_data_disk(self, resource_group, vmname, disk_name):
         virtual_machine = self.get_vm(resource_group, vmname)
@@ -766,7 +806,7 @@ class azure_operations:
                 raise ValueError('Storage account {} not in location {}.'.format(storage_account, location))
             # create storage container 
             container = '{}-vhds'.format(vmname)
-            self.create_storage_container(resource_group, storage_account, container)
+            self.create_storage_container(storage_account, container)
         else:
             container = None
 
@@ -1028,7 +1068,7 @@ class arg_parse:
     def __init__(self):
         self.parser = argparse.ArgumentParser()
         self.subparsers = self.parser.add_subparsers(title='subcommands', description='valid subcommands', help='additional help')
-        self.list_parser = self.subparsers.add_parser('list', description='list a specified resource', help='resource_group | storage_account | container | vm | vnet | subnet | nic | public_ip | vhd | vm_state | vm_ip | vm_disk')
+        self.list_parser = self.subparsers.add_parser('list', description='list a specified resource', help='resource_group | storage_account | container | vm | vnet | subnet | nic | public_ip | vhd | vm_state | vm_size | vm_ip | vm_disk')
         self.create_parser = self.subparsers.add_parser('create', description='create a specified resource', help='resource_group | storage_account | container | vm | vnet | subnet | nic | public_ip')
         self.delete_parser = self.subparsers.add_parser('delete', description='delete a specified resource', help='resource_group | storage_account | container | vm | vnet | subnet | nic | public_ip | container | blob')
         self.start_parser = self.subparsers.add_parser('start', description='start a specified vm', help='vm')
@@ -1067,18 +1107,13 @@ class arg_parse:
         # list resource groups
         list_rg = list_subparser.add_parser('resource_group', help='list resource groups')
         list_rg.set_defaults(func=self.list_resource_groups)
-        # list all resources within a resource group
-        list_re = list_subparser.add_parser('resource', help='list all resources')
-        list_re.add_argument('-r', '--resource_group', help='list storage accounts within a resource group')
-        list_re.set_defaults(func=self.list_resources)
         # list storage accounts
         list_sa = list_subparser.add_parser('storage_account', help='list storage accounts')
         list_sa.add_argument('-r', '--resource_group', help='list storage accounts within a resource group')
         list_sa.set_defaults(func=self.list_storage_accounts)
         # list storage containers
         list_sa = list_subparser.add_parser('container', help='list storage containers')
-        list_sa.add_argument('-r', '--resource_group', help='list storage containers within a resource group')
-        list_sa.add_argument('-s', '--storage_account', help='list storage containers within a storage_account')
+        list_sa.add_argument('-s', '--storage_account', required = True, help='list storage containers within a storage_account')
         list_sa.set_defaults(func=self.list_storage_containers)
         # list vms
         list_vm = list_subparser.add_parser('vm', help='list vms within a resource group')
@@ -1109,6 +1144,11 @@ class arg_parse:
         list_state.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
         list_state.add_argument('-n', '--name', required=True, help='list a specific vm')
         list_state.set_defaults(func=self.list_vm_state)
+        # list a vm's size
+        list_size = list_subparser.add_parser('vm_size', help="list a vm's size within a resource group")
+        list_size.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
+        list_size.add_argument('-n', '--name', required=True, help='list a specific vm')
+        list_size.set_defaults(func=self.list_vm_size)
         # list a vm's ip 
         list_ip = list_subparser.add_parser('vm_ip', help="list a vm's ips within a resource group")
         list_ip.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
@@ -1120,11 +1160,11 @@ class arg_parse:
         list_disk.add_argument('-n', '--name', required=True, help='list a specific vm')
         list_disk.set_defaults(func=self.list_vm_data_disk)
         # list vhds within a storage account 
-        list_disk = list_subparser.add_parser('vhd', help="list vhds within a storage account")
-        list_disk.add_argument('-r', '--resource_group', required=True, help='list resources wihtin this group')
-        list_disk.add_argument('-s', '--storage_account', help='list vhds within this storage account')
-        list_disk.add_argument('-c', '--container', help='list vhds within this storage container')
-        list_disk.set_defaults(func=self.list_vhds)
+        list_vhd = list_subparser.add_parser('vhd', help="list vhds within a storage account")
+        list_vhd.add_argument('-r', '--resource_group', help='list resources wihtin this group')
+        list_vhd.add_argument('-s', '--storage_account', help='list vhds within this storage account')
+        list_vhd.add_argument('-c', '--container', help='list vhds within this storage container')
+        list_vhd.set_defaults(func=self.list_vhds)
 
     def add_create_subcommands(self):
         # create subcommands
@@ -1144,7 +1184,6 @@ class arg_parse:
         create_sa.set_defaults(func=self.create_storage_account)
         # create storage container
         create_container = create_subparser.add_parser('container', help='create a storage container')
-        create_container.add_argument('-r', '--resource_group', required=True, help='create a storage container within this resource group')
         create_container.add_argument('-s', '--storage_account', required=True, help='create a storage container within this storage account')
         create_container.add_argument('-n', '--name', required=True, help='create a storage container with this name')
         create_container.set_defaults(func=self.create_storage_container)
@@ -1304,8 +1343,6 @@ class arg_parse:
         detach_disk.add_argument('-d', '--disk_name', required=True, help='detach a disk with this name')
         detach_disk.set_defaults(func=self.detach_disk_from_vm)
 
-    def list_resources(self, args):
-        self.azure_ops.list_resources(args.resource_group)
     
     def list_resource_groups(self, args):
         self.azure_ops.list_resource_groups()
@@ -1314,7 +1351,7 @@ class arg_parse:
         self.azure_ops.list_storage_accounts(args.resource_group)
     
     def list_storage_containers(self, args):
-        self.azure_ops.list_storage_container(args.resource_group, args.storage_account)
+        self.azure_ops.list_storage_container(args.storage_account)
     
     def list_virtual_machines(self, args):
         self.azure_ops.list_virtual_machines(args.resource_group, args.name)
@@ -1331,7 +1368,10 @@ class arg_parse:
         self.azure_ops.list_network_interfaces(args.resource_group)
     
     def list_vm_state(self, args):
-        state = self.azure_ops.list_vm_state(args.resource_group, args.name)
+        self.azure_ops.list_vm_state(args.resource_group, args.name)
+    
+    def list_vm_size(self, args):
+        self.azure_ops.list_vm_size(args.resource_group, args.name)
     
     def list_public_ip(self, args):
         self.azure_ops.list_public_ip(args.resource_group)
@@ -1415,9 +1455,6 @@ class arg_parse:
     def list_vhds(self, args):
         self.azure_ops.list_vhds(args.resource_group, args.storage_account, args.container)
 
-    def list_blobs(self, args):
-        self.azure_ops.list_blobs(args.resource_group, args.storage_account, args.container)
-    
     def attach_disk_to_vm(self, args):
         self.azure_ops.attach_data_disk(args.resource_group, args.name, args.disk_name, args.disk_size, args.existing, args.managed_disk)
     
