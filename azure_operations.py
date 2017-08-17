@@ -348,6 +348,9 @@ class azure_operations:
     # for a full delte, even the data disks will be deleted
     def delete_vm(self, resource_group, vmname, keep_data = False):
         vm = self.get_vm(resource_group, vmname)
+        if not vm:
+            return
+
         # Get the list of network interfaces of the VM
         nics = vm.network_profile.network_interfaces
 
@@ -409,7 +412,7 @@ class azure_operations:
         blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)
         blob_service.delete_container(container_name = container)
 
-    def delete_blob(self, storage_account, container, blob_name, managed_disk = False):
+    def delete_blob(self, resource_group, storage_account, container, blob_name, managed_disk = False):
         if not managed_disk:
             account_key = self.list_storage_account_primary_key(storage_account)
             blob_service = BaseBlobService(account_name = storage_account ,account_key = account_key)

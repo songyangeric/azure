@@ -1,11 +1,16 @@
-import os
-import subprocess
-import re
-import argparse
+import sys, os, subprocess, re, argparse, logging
 
 vm_whitelist = []
 container_whitelist = ['ddvevhds', 'templates']
-vhd_whitelist = ['AVE-7.4.1.56-disk1.vhd', 'AVE-7.4.0.242-disk1.vhd']
+vhd_whitelist = ['AVE-7.4.1.56-disk1.vhd', 'AVE-7.4.0.242-disk1.vhd', 'AVE-7.5.0.183-disk1.vhd', 'AVE-7.4.1.56-disk1.vhd']
+
+# set logging level
+logger = logging.getLogger('Logging')
+logger.setLevel(logging.INFO)
+# stream handler
+sh = logging.StreamHandler(stream = sys.stdout)
+sh.setFormatter(logging.Formatter(fmt = '%(message)s'))
+logger.addHandler(sh)
 
 def execute_sync(cmd, out=None, err=None, std_in=None, **kargs):
     """
@@ -40,9 +45,9 @@ def delete_unused_nics(resource_group):
             cmd = "/usr/bin/python azure_operations.py delete nic -r {} -n {}".format(resource_group, available_nic)
             _p = execute_sync(cmd, shell=True)
             if _p.returncode == 0:
-                print 'Successfully delete NIC {}'.format(available_nic)
+                logger.info('NIC {} successfully deleted.'.format(available_nic))
             else:
-                print 'Failed to delete NIC {}: {}'.format(available_nic_info[0], _p.stderr.readlines())
+                logger.error('Failed to delete NIC {}: {}'.format(available_nic_info[0], _p.stderr.readlines()))
 
 def read_2_lines(fd):
     while True:
@@ -64,13 +69,12 @@ def delete_unused_vms(resource_group):
             vm_name = vm_info[0].split(':')[1].strip()
             vm_state = vm_info[1].split(':')[1].strip()
             if 'running' not in vm_state and vm_name not in vm_whitelist and 'longrun' not in vm_name.lower() and '-lr' not in vm_name.lower():
-                print 'Deleting VM {}'.format(vm_name)
                 cmd = "/usr/bin/python azure_operations.py delete vm -r {} -n {}".format(resource_group, vm_name)
                 _p = execute_sync(cmd, shell=True)
                 if _p.returncode == 0:
-                    print 'VM {} successfully deleted.'.format(vm_name)
+                    logger.info('VM {} successfully deleted.'.format(vm_name))
                 else:
-                    raise SystemError('Failed to delete VM {}: {}'.format(vm_name, _p.stderr.readlines()))
+                    logger.error('Failed to delete VM {}: {}'.format(vm_name, _p.stderr.readlines()))
 
 def delete_unused_container_per_sa(resource_group, storage_account):
     cmd = "/usr/bin/python azure_operations.py list container -r {} -s {}".format(resource_group, storage_account)
@@ -80,8 +84,9 @@ def delete_unused_container_per_sa(resource_group, storage_account):
             container = container.strip()
             if 'bootdiagnostics-' in container:
                 cmd = "/usr/bin/python azure_operations.py delete container -r {} -s {} -n {}".format(resource_group, storage_account, container)
-                print 'Deleting storage container {}'.format(container)
                 _p = execute_sync(cmd, shell=True)
+                if _p.returncode == 0:
+                    logger.info('Storage container {} successfully deleted.'.format(container))
 
 def delete_unused_vhds(resource_group):
     cmd = "/usr/bin/python azure_operations.py list storage_account -r {} | grep 'Name'".format(resource_group)
@@ -111,19 +116,21 @@ def delete_unused_vhd(resource_group, storage_account, container, disk_name):
     if not storage_account and not container:
         # delete managed disks
         cmd = "/usr/bin/python azure_operations.py delete blob -r {} -n {} --managed_disk".format(resource_group, disk_name)
-        print 'Deleting managed disk {}'.format(disk_name)
         p = execute_sync(cmd, shell=True)
         if p.returncode != 0:
-            print 'Failed to delete vhd {} : {}'.format(disk_name, p.stderr.readlines())
+            logger.error('Failed to delete vhd {} : {}'.format(disk_name, p.stderr.readlines()))
+        else:
+            logger.info('Managed disk {} successfully deleted.'.format(disk_name))
     else:
         # delete unmanaged disks
         if disk_name in vhd_whitelist or container in container_whitelist:
             return
         cmd = "/usr/bin/python azure_operations.py delete blob -r {} -s {} -c {} -n {}".format(resource_group, storage_account, container, disk_name)
-        print 'Deleting vhd {}/{}/{}'.format(storage_account, container, disk_name)
         p = execute_sync(cmd, shell=True)
         if p.returncode != 0:
-            print 'Failed to delete vhd {} : {}'.format(disk_name, p.stderr.readlines())
+            logger.error('Failed to delete vhd {} : {}'.format(disk_name, p.stderr.readlines()))
+        else:
+            logger.info('Unmanaged disk {} successfully deleted.'.format(disk_name))
 
 def delete_unused_public_ips(resource_group):
     cmd = "/usr/bin/python azure_operations.py list public_ip -r {} | grep 'None'".format(resource_group)
@@ -132,10 +139,11 @@ def delete_unused_public_ips(resource_group):
         for ip_info in p.stdout.readlines():
             public_ip_name = ip_info.split(':')[0].strip()
             cmd = "/usr/bin/python azure_operations.py delete public_ip -r {} -n {}".format(resource_group, public_ip_name)
-            print 'Deleting public ip {}'.format(public_ip_name)
             _p = execute_sync(cmd, shell=True)
             if _p.returncode != 0:
-                print 'Failed to delete public ip {} : {}'.format(public_ip_name, p.stderr.readlines())
+                logger.error('Failed to delete public ip {} : {}'.format(public_ip_name, p.stderr.readlines()))
+            else:
+                logger.info('Public ip {} successfully deleted.'.format(public_ip_name))
 
 
 if __name__ == '__main__':
@@ -143,9 +151,9 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--resource_group', required = True, help='delete resources from this group')
     parsed_args = parser.parse_args()
 
-    delete_unused_vms(parsed_args.resource_group)
+    #delete_unused_vms(parsed_args.resource_group)
     delete_unused_nics(parsed_args.resource_group)
-    delete_unused_vhds(parsed_args.resource_group)
+    #delete_unused_vhds(parsed_args.resource_group)
     delete_unused_public_ips(parsed_args.resource_group)
     
 
