@@ -7,7 +7,7 @@ from azure.mgmt.storage import StorageManagementClient
 from azure.mgmt.compute.models import Plan, HardwareProfile, SshConfiguration, VirtualMachineSize
 from azure.mgmt.compute.models import SshPublicKey, LinuxConfiguration, OSProfile, ImageReference 
 from azure.mgmt.compute.models import VirtualHardDisk, OSDisk, DataDisk, StorageProfile, ManagedDiskParameters 
-from azure.mgmt.compute.models import NetworkInterfaceReference, NetworkProfile
+from azure.mgmt.compute.models import DiskCreateOption, NetworkInterfaceReference, NetworkProfile
 from azure.mgmt.compute.models import BootDiagnostics, DiagnosticsProfile, VirtualMachine 
 from azure.mgmt.network.models import PublicIPAddress 
 from azure.mgmt.storage.models import Kind, Sku, StorageAccountCreateParameters
@@ -736,7 +736,9 @@ class azure_operations:
                 return sa
         return None
 
-    def create_vm(self, resource_group, storage_account, location, vm_size, vmname, vnet, subnet_list, ssh_public_key = None, publisher = None, offer = None, sku = None, image = None, username = None, password = None, public_ip = False, static_public_ip = False):
+    def create_vm(self, resource_group, storage_account, location, vm_size, vmname, vnet, subnet_list, 
+                  ssh_public_key = None, publisher = None, offer = None, sku = None, image = None,
+                  username = None, password = None, public_ip = False, static_public_ip = False):
         # determine location
         if not location:
             location = self.get_location(resource_group) 
@@ -751,37 +753,31 @@ class azure_operations:
             raise ValueError('Illegal vm name. The specified vm already exists.')
 
         # offer related check
-        if publisher is None:
+        if not publisher and not offer:
             publisher = 'dellemc'
-
-        if offer is None:
             offer = 'dell-emc-datadomain-virtual-edition'
 
-        if sku is None and image is None:
-            raise ValueError('Either SKU or customized image must be specified.')
-
         # default username
-        if username is None:
+        if not username:
             username = 'sysadmin'
 
         # authentication check 
-        if password is None and ssh_public_key is None:
+        if not password and not ssh_public_key:
             raise ValueError('Either Password or SSH Public Key must be specified.')
         
         # size check
-        if offer == 'dell-emc-datadomain-virtual-edition':
-            if supported_vm_sizes.get(vm_size.upper()) is None:
-                raise ValueError('Wrong capacity {} provided.'.format(vm_size))
-            else:
-                vm_size = supported_vm_sizes[vm_size.upper()]
-        else:
+        if (image and 'ddve' not in image.lower()) or publisher != 'dellemc' or offer != 'dell-emc-datadomain-virtual-edition':
             # check whether this size of VM exists in this location
             vm_size_obj = self.get_vm_size(location, vm_size)
             if not vm_size_obj:
                 raise ValueError('VM size {} does not exist in {}'.format(vm_size, location))
+        else:
+            if supported_vm_sizes.get(vm_size.upper()) is None:
+                raise ValueError('Wrong capacity {} provided.'.format(vm_size))
+            else:
+                vm_size = supported_vm_sizes[vm_size.upper()]
 
         # vnet check
-        #vnet_ref = self.network_client.virtual_networks.get(resource_group, vnet)
         vnet_ref = self.get_vnet_by_location(location, vnet)
         if not vnet_ref:
             raise ValueError('Virtual network {} does not exist in location {}.'.format(vnet, location))
@@ -793,16 +789,6 @@ class azure_operations:
             if not subnet_ref:
                 raise ValueError('Subnet {} does not exist.'.format(subnet))
             
-        # if customized image used, the storage account where customized image located will be used
-        if image:
-            sa_pat = re.compile('\s?https://(?P<storage_account>\w+)\..*')
-            grp = sa_pat.search(image)
-            if grp:
-                storage_account = grp.group('storage_account')
-                logger.warning('Use the storage account specified by customized image.')
-            else:
-                raise ValueError('Invalid VHD Uri')
-        
         # if storage account is not specified, managed disks will be used
         if storage_account:
             if not self.get_storage_account_by_location(location, storage_account):
@@ -819,17 +805,19 @@ class azure_operations:
         for subnet in subnets:
             nic_num += 1
             nic_name = vmname + '-nic{}'.format(nic_num) 
-            nic_ref = self.create_nic(resource_group, vnet, subnet.strip(), location, nic_name)
-            #nic_ref = self.get_nic(resource_group, nic_name)
+            nic_ref = self.get_nic(resource_group, nic_name)
             if not nic_ref:
-                raise SystemError('Failed to create NIC')
+                nic_ref = self.create_nic(resource_group, vnet, subnet.strip(), location, nic_name)
+            else:
+                if nic_ref.virtual_machine:
+                    raise ValueError('NIC attached to an exsisting VM.')
             nic_ids.append(nic_ref.id)
        
         # template parameters
         try:
-            parameters = self.create_vm_parameters(location = location, storage_account = storage_account,
-                             container = container, vm_size = vm_size, vmname = vmname, 
-                             nic_ids = nic_ids, ssh_public_key = ssh_public_key, 
+            parameters = self.create_vm_parameters(resource_group = resource_group, location = location, 
+                             storage_account = storage_account, container = container, vm_size = vm_size, 
+                             vmname = vmname, nic_ids = nic_ids, ssh_public_key = ssh_public_key, 
                              publisher = publisher, offer = offer, sku = sku, image = image,
                              username = username, password = password)
             
@@ -866,12 +854,16 @@ class azure_operations:
                 self.create_public_ip(resource_group, vmname, True)
             else:
                 self.create_public_ip(resource_group, vmname, False)
-        
+
+        # if a VM is created from a vhd converted manage disk, remove the intermediate os image
+        if image and not storage_account:
+            os_image = '{}-osImage'.format(vmname)
+            self.compute_client.images.delete(resource_group, os_image)
+
         self.print_vm_info(resource_group, vm)
 
-    def create_vm_parameters(self, location, storage_account, container, vm_size, vmname, 
-                             nic_ids, ssh_public_key, publisher, offer, sku, image, username, 
-                             password):
+    def create_vm_parameters(self, resource_group, location, storage_account, container, vm_size, vmname, nic_ids, 
+                             ssh_public_key, publisher, offer, sku, image, username,  password):
        
         # hardware profile 
         hardware_profile = HardwareProfile(vm_size = vm_size)
@@ -888,17 +880,17 @@ class azure_operations:
         os_profile = OSProfile(computer_name = vmname, admin_username = username, 
                      admin_password = password, linux_configuration = linux_config)
       
-        image_ref = None
+        image_reference = None
         if publisher and offer and sku:
-            image_ref = ImageReference(publisher = publisher, offer = offer, sku = sku, version = 'latest') 
+            image_reference = ImageReference(publisher = publisher, offer = offer, sku = sku, version = 'latest') 
         
         # create_option: fromImage, empty, attach
         # for ddve, data disk will be created 'fromImage' if publisher/offer/sku specified
         # otherwise data disk will be created empty
-        if not image and offer == 'dell-emc-datadomain-virtual-edition':
-            create_opt = 'fromImage'
+        if publisher and offer and sku:
+            data_create_opt = 'fromImage'
         else:
-            create_opt = 'empty'
+            data_create_opt = 'empty'
         # use unmanaged disks
         if storage_account:
             os_vhd_uri = 'https://{}.blob.core.windows.net/{}/{}-os.vhd'.format(storage_account, container, vmname) 
@@ -906,26 +898,52 @@ class azure_operations:
             source_image = None
             if image:
                 source_image = VirtualHardDisk(uri = image)
-            os_disk_ref = OSDisk(create_option = 'fromImage', name = 'osDisk', vhd = os_vhd, os_type = 'Linux', image = source_image)
+            os_disk_name = '{}-osDisk'.format(vmname)
+            os_disk_ref = OSDisk(create_option = 'fromImage', name = os_disk_name, vhd = os_vhd, os_type = 'Linux', image = source_image)
             
-            data_disk_refs = None
-            if offer == 'dell-emc-datadomain-virtual-edition':
+            if (image and 'ddve' not in image.lower()) or publisher != 'dellemc' or offer != 'dell-emc-datadomain-virtual-edition':
+                data_disk_refs = None
+            else:
                 data_vhd_uri = 'https://{}.blob.core.windows.net/{}/{}-nvram.vhd'.format(storage_account, container, vmname) 
                 data_vhd = VirtualHardDisk(uri = data_vhd_uri)
-                data_disk_ref = DataDisk(lun = 0, disk_size_gb = 10, create_option = create_opt, name = 'nvramDisk', vhd = data_vhd)
+                data_disk_name = '{}-nvramDisk'.format(vmname)
+                data_disk_ref = DataDisk(lun = 0, disk_size_gb = 10, create_option = data_create_opt, name = data_disk_name, vhd = data_vhd)
                 data_disk_refs = [data_disk_ref]
             
-            storage_profile = StorageProfile(image_reference = image_ref, os_disk = os_disk_ref, data_disks = data_disk_refs)
+            storage_profile = StorageProfile(image_reference = image_reference, os_disk = os_disk_ref, data_disks = data_disk_refs)
         # use managed disks
         else:
-            data_disk_refs = None
-            if offer == 'dell-emc-datadomain-virtual-edition':
+            # You need first create a managed image for your vhd
+            # See more at https://github.com/Azure/azure-sdk-for-python/issues/1380
+            os_disk_ref = None
+            if image:
+                image_name = '{}-osImage'.format(vmname)
+                async_create = self.compute_client.images.create_or_update(
+                    resource_group, image_name, 
+                    {
+                        'location': location,
+                        'storage_profile': {
+                            'os_disk': {
+                                'os_type': 'Linux',
+                                'os_state': "Generalized",
+                                'blob_uri': image,
+                                'caching': "ReadWrite",
+                            }
+                        }
+                    })
+                managed_image_ref = async_create.result()
+                image_reference = ImageReference(id = managed_image_ref.id) 
+               
+            if (image and 'ddve' not in image.lower()) or publisher != 'dellemc' or offer != 'dell-emc-datadomain-virtual-edition':
+                data_disk_refs = None
+            else:
                 disk_name = '{}-nvramDisk'.format(vmname)
-                data_disk_ref = DataDisk(lun = 0, disk_size_gb = 10, create_option = create_opt, 
-                            name = disk_name, managed_disk = ManagedDiskParameters())
+                data_disk_ref = DataDisk(lun = 0, disk_size_gb = 10, create_option = data_create_opt, 
+                                name = disk_name, managed_disk = ManagedDiskParameters())
 
                 data_disk_refs = [data_disk_ref]
-            storage_profile = StorageProfile(image_reference = image_ref, data_disks = data_disk_refs)
+
+            storage_profile = StorageProfile(image_reference = image_reference, os_disk = os_disk_ref, data_disks = data_disk_refs)
 
         # network profile
         nic_list = []
@@ -991,7 +1009,7 @@ class azure_operations:
         else:
             create_opt = 'empty'
             disk_uri = '{}/{}.vhd'.format(disk_uri, disk_name)
-        
+       
         vm_obj.storage_profile.data_disks.append(
             DataDisk(lun = available_lun, name = disk_name, disk_size_gb = disk_size,
                 vhd = {
@@ -1038,7 +1056,7 @@ class azure_operations:
         async_vm_update.wait()
 
 
-    def attach_data_disk(self, resource_group, vmname, disk_name, disk_size, existing = None, managed_disk = False):
+    def attach_data_disk(self, resource_group, vmname, disk_name, disk_size, existing = None):
         if (int(disk_size) < 1):
             disk_size = 1
         elif (int(disk_size) > 4095):
@@ -1047,7 +1065,14 @@ class azure_operations:
         vm = self.get_vm(resource_group, vmname)
         if not vm:
             raise ValueError('The specified VM {} does not exist.'.format(vmname))
-        
+       
+        # check whether managed disks is used 
+        os_disk = vm.storage_profile.os_disk
+        if os_disk.managed_disk:
+            managed_disk = True
+        else:
+            managed_disk = False
+
         data_disks = vm.storage_profile.data_disks
         #find an available lun
         used_luns = []
@@ -1062,10 +1087,6 @@ class azure_operations:
             self.attach_managed_disk(resource_group, vm, disk_name, disk_size, available_lun, existing)
         else:
             self.attach_unmanaged_disk(resource_group, vm, disk_name, disk_size, available_lun, existing)
-
-    def get_vm_state(self, resource_group, vmname):
-        vm = self.compute_client.virtual_machines.get_with_instance_view(resource_group, vmname).virtual_machine
-        vm_status = vm.instance_view.statuses[1].display_state
 
 class arg_parse:
     def __init__(self):
@@ -1193,13 +1214,13 @@ class arg_parse:
         # create vm
         create_vm = create_subparser.add_parser('vm', help='create a vm within a resource group')
         create_vm.add_argument('-r', '--resource_group', required=True, help='create a vm wihtin this resource group')
-        create_vm.add_argument('-s', '--storage_account', help='create a vm with this storage account')
-        create_vm.add_argument('-l', '--location', help='create a vm within this location')
-        create_vm.add_argument('-c', '--vm_size', required=True, help='create a vm with this size')
+        create_vm.add_argument('-s', '--storage_account', help='if not specified, managed disks will be used.')
+        create_vm.add_argument('-l', '--location', help='if not specified, resource group location will be used')
+        create_vm.add_argument('-c', '--vm_size', required=True, help='for ddve, please use capacity like 7T/15T; for other linux vms, standard vm size can be used')
         create_vm.add_argument('-n', '--name', required=True, help='create a vm with this name')
         create_vm.add_argument('-v', '--vnet', required=True, help='create a vm with this vnet')
-        create_vm.add_argument('-e', '--subnet', required=True, help='create a vm with 2 subnets')
-        create_vm.add_argument('-k', '--ssh_key', help='create a vm with this ssh key')
+        create_vm.add_argument('-e', '--subnet', required=True, help="use ',' to separate multiple subnets")
+        create_vm.add_argument('-k', '--ssh_key', help='create a vm with this public ssh key')
         create_vm.add_argument('-u', '--username', help='create a vm with this username')
         create_vm.add_argument('-p', '--password', help='create a vm with login password')
         create_vm.add_argument('-P', '--publisher', help='create a vm from this publisher')
@@ -1214,21 +1235,21 @@ class arg_parse:
         create_vnet.add_argument('-r', '--resource_group', required=True, help='create a vnet wihtin this group')
         create_vnet.add_argument('-n', '--name', required=True, help='create a vnet with this name')
         create_vnet.add_argument('-l', '--location', required=True, help='create a vnet within this location')
-        create_vnet.add_argument('-p', '--prefix', required=True, help='create a vnet with this address prefix')
+        create_vnet.add_argument('-p', '--prefix', required=True, help="address prefix like '10.0.0.1/16'")
         create_vnet.set_defaults(func=self.create_virtual_network)
         # create subnet
         create_subnet = create_subparser.add_parser('subnet', help='create a subnet within a virutal network')
         create_subnet.add_argument('-r', '--resource_group', required=True, help='create a subnet wihtin this group')
         create_subnet.add_argument('-v', '--vnet', required=True, help='create a subnet with this vnet')
         create_subnet.add_argument('-n', '--name', required=True, help='create a subnet with this name')
-        create_subnet.add_argument('-p', '--prefix', required=True, help='create a subnet with this address prefix')
+        create_subnet.add_argument('-p', '--prefix', required=True, help="address prefix like '10.0.0.1/24', make sure the prefix is part of the vnet prefix")
         create_subnet.set_defaults(func=self.create_subnetwork)
         # create nic
         create_nic = create_subparser.add_parser('nic', help='create a nic within a resource group')
         create_nic.add_argument('-r', '--resource_group', required=True, help='create a nic wihtin this group')
         create_nic.add_argument('-v', '--vnet', required=True, help='create a nic with this vnet')
         create_nic.add_argument('-e', '--subnet', required=True, help='create a nic with this subnet')
-        create_nic.add_argument('-l', '--location', required=True, help='create a nic within this location')
+        create_nic.add_argument('-l', '--location', required=True, help='create a nic where the vnet is')
         create_nic.add_argument('-n', '--name', required=True, help='create a nic with this name')
         create_nic.set_defaults(func=self.create_network_interface)
         # create public ip
@@ -1334,7 +1355,6 @@ class arg_parse:
         attach_disk.add_argument('-d', '--disk_name', required=True, help='attach a disk with this name')
         attach_disk.add_argument('-g', '--disk_size', required=True, help='attach a disk with this size in GiB')
         attach_disk.add_argument('-e', '--existing', help='attach an existing disk')
-        attach_disk.add_argument('--managed_disk', action='store_true', help='attach a managed disk')
         attach_disk.set_defaults(func=self.attach_disk_to_vm)
 
     def add_detach_subcommands(self):
@@ -1432,9 +1452,19 @@ class arg_parse:
         # for creating vms, publisher/offer/sku conflict with customized image
         if args.image: 
             if self.parsed_args.publisher or self.parsed_args.offer or self.parsed_args.sku:
-                raise ValueError('publiser/offer/sku cannot be specified together with customized image')
+                raise ValueError('publisher/offer/sku cannot be specified together with customized image')
+            # if customized image used, the storage account where customized image located will be used
+            sa_pat = re.compile('\s?https://(?P<storage_account>\w+)\..*')
+            grp = sa_pat.search(args.image)
+            if grp:
+                storage_account = grp.group('storage_account')
+                if args.storage_account and args.storage_account != storage_account:
+                    raise ValueError('Please use the same storage account where your customized image is.')
+            else:
+                raise ValueError('Invalid image url provided.')
                 
-        self.azure_ops.create_vm(args.resource_group, args.storage_account, args.location, args.vm_size, args.name, args.vnet, args.subnet, args.ssh_key, args.publisher, args.offer, args.sku, args.image, args.username, args.password, args.public_ip, args.static_ip)
+        self.azure_ops.create_vm(args.resource_group, args.storage_account, args.location, args.vm_size, args.name, args.vnet, args.subnet, args.ssh_key, args.publisher, args.offer, 
+                args.sku, args.image, args.username, args.password, args.public_ip, args.static_ip)
     
     def create_public_ip(self, args):
         self.azure_ops.create_public_ip(args.resource_group, args.name, args.static)
@@ -1459,7 +1489,7 @@ class arg_parse:
         self.azure_ops.list_vhds(args.resource_group, args.storage_account, args.container)
 
     def attach_disk_to_vm(self, args):
-        self.azure_ops.attach_data_disk(args.resource_group, args.name, args.disk_name, args.disk_size, args.existing, args.managed_disk)
+        self.azure_ops.attach_data_disk(args.resource_group, args.name, args.disk_name, args.disk_size, args.existing)
     
     def detach_disk_from_vm(self, args):
         self.azure_ops.detach_data_disk(args.resource_group, args.name, args.disk_name)
