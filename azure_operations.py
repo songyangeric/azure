@@ -29,7 +29,7 @@ supported_vm_sizes = {
     '15T' : 'Standard_F8',
     '16T' : 'Standard_F8',
     '32T' : 'Standard_D4_v2',
-    '96T' : 'Standard_D15_v2'
+    '96T' : 'Standard_D14_v2'
 }
 
 # storage account types
@@ -752,8 +752,8 @@ class azure_operations:
             location = self.get_location(resource_group) 
 
         # vmname check
-        if re.search(r'[^-0-9A-Za-z]', vmname) is not None:
-            raise ValueError('Illegal vm name. Only digits, letters and - can be used.')
+        if re.search(r'[^-0-9A-Za-z]{5,12}', vmname) is not None:
+            raise ValueError('Illegal vm name. Only digits, letters and - can be used. Name length should be 5~12')
         
         # vm check
         vm_obj = self.get_vm(resource_group, vmname)
@@ -774,7 +774,9 @@ class azure_operations:
             raise ValueError('Either Password or SSH Public Key must be specified.')
         
         # size check
-        if (image and 'ddve' not in image.lower()) or publisher != 'dellemc' or offer != 'dell-emc-datadomain-virtual-edition':
+        if not re.search('Standard_', vm_size) or re.search('\d+T', vm_size):
+            raise ValueError('Please use either *T or Standard_* as vm size.')
+        if (image and 'ddve' not in image.lower()) or publisher != 'dellemc' or offer != 'dell-emc-datadomain-virtual-edition' or 'Standard_' in vm_size:
             # check whether this size of VM exists in this location
             vm_size_obj = self.get_vm_size(location, vm_size)
             if not vm_size_obj:
@@ -923,6 +925,10 @@ class azure_operations:
         else:
             # You need first create a managed image for your vhd
             # See more at https://github.com/Azure/azure-sdk-for-python/issues/1380
+            storage_account_type = 'Standard_LRS'
+            if re.search('Standard_[A-Z]S\d+', vm_size):
+                storage_account_type = 'Premium_LRS'
+
             os_disk_ref = None
             if image:
                 image_name = '{}-osImage'.format(vmname)
@@ -936,6 +942,7 @@ class azure_operations:
                                 'os_state': "Generalized",
                                 'blob_uri': image,
                                 'caching': "ReadWrite",
+                                'storage_account_type': storage_account_type,
                             }
                         }
                     })
@@ -1454,7 +1461,7 @@ class arg_parse:
         self.azure_ops.create_storage_account(args.resource_group, args.name, args.kind, args.type, args.access_tier)
     
     def create_storage_container(self, args):
-        self.azure_ops.create_storage_container(args.resource_group, args.storage_account, args.name)
+        self.azure_ops.create_storage_container(args.storage_account, args.name)
     
     def create_virtual_network(self, args):
         self.azure_ops.create_vnet(args.resource_group, args.location, args.name, args.prefix)

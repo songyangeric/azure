@@ -118,8 +118,12 @@ def delete_unused_vhds(resource_group, delete = False):
                 container_info = container_info.strip()
                 if re.search('[0-9a-z]{16}-[0-9a-z]{16}-[cdm]0', container_info):
                     logger.error('Wrong Usage: {}/{}'.format(sa_name, container_info))
-                    continue
-                if 'bootdiagnostics-' in container_info:
+                    if delete:
+                        cmd = "/usr/bin/python {} delete container -s {} -n {}".format(azure_module_path, sa_name, container_info)
+                        _p = execute_sync(cmd, shell=True)
+                        if _p.returncode == 0:
+                            logger.info('Storage container {} successfully deleted.'.format(container_info))
+                elif 'bootdiagnostics-' in container_info:
                     if delete:
                         cmd = "/usr/bin/python {} delete container -s {} -n {}".format(azure_module_path, sa_name, container_info)
                         _p = execute_sync(cmd, shell=True)
@@ -215,21 +219,24 @@ if __name__ == '__main__':
     parser.add_argument('--delete', action='store_true', help='delete resources from this group')
     parsed_args = parser.parse_args()
 
+    subscription_map = {}
+    cmd = "/usr/bin/python {} list subscription".format(azure_module_path)
+    p = execute_sync(cmd, shell=True)
+    if p.returncode == 0:
+        for sub_info in read_2_lines(p.stdout): 
+            sub_name = sub_info[0].split(':')[1].strip()
+            sub_id = sub_info[1].split(':')[1].strip()
+            subscription_map[sub_id] = sub_name
+    
     if not parsed_args.subscription:
-        cmd = "/usr/bin/python {} list subscription".format(azure_module_path)
-        p = execute_sync(cmd, shell=True)
-        if p.returncode == 0:
-            for sub_info in read_2_lines(p.stdout): 
-                sub_name = sub_info[0].split(':')[1].strip()
-                sub_id = sub_info[1].split(':')[1].strip()
-        
+            for (sub_id, sub_name) in subscription_map.items(): 
                 os.environ['AZURE_SUBSCRIPTION_ID'] = sub_id
                 logger.info('')
-                logger.info('Subscription: {}'.format(sub_name))
+                logger.info('Subscription: {} - {}'.format(sub_id, sub_name))
                 delete_unused_resources(sub_id, parsed_args.resource_group, parsed_args.delete)
     else:
         os.environ['AZURE_SUBSCRIPTION_ID'] = parsed_args.subscription
-        logger.info('Subscription: {}'.format(parsed_args.subscription))
+        logger.info('Subscription: {} - {}'.format(parsed_args.subscription, subscription_map[parsed_args.subscription]))
         delete_unused_resources(parsed_args.subscription, parsed_args.resource_group, parsed_args.delete) 
 
 
