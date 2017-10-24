@@ -774,7 +774,7 @@ class azure_operations:
             raise ValueError('Either Password or SSH Public Key must be specified.')
         
         # size check
-        if not re.search('Standard_', vm_size) or re.search('\d+T', vm_size):
+        if not re.search('Standard_', vm_size) or not re.search('\d+T', vm_size):
             raise ValueError('Please use either *T or Standard_* as vm size.')
         if (image and 'ddve' not in image.lower()) or publisher != 'dellemc' or offer != 'dell-emc-datadomain-virtual-edition' or 'Standard_' in vm_size:
             # check whether this size of VM exists in this location
