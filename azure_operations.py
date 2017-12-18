@@ -60,13 +60,13 @@ class azure_operations:
 
         # initialize resouce and storage management object
         try:
-            credentials = ServicePrincipalCredentials(
+            self.credentials = ServicePrincipalCredentials(
                     client_id = self.client_id, 
                     secret = self.secret_key, 
                     tenant = self.tenant_id
                     )
         except Exception as e:
-            credentials = ServicePrincipalCredentials(
+            self.credentials = ServicePrincipalCredentials(
                     client_id = self.client_id, 
                     secret = self.secret_key, 
                     tenant = self.tenant_id,
@@ -74,16 +74,16 @@ class azure_operations:
                     )
             self.inChina = True
 
-        self.subscription_client = SubscriptionClient(credentials)
+        self.subscription_client = SubscriptionClient(self.credentials)
         if self.subscription_id:
             self.init_clients(self.subscription_id)
 
     def init_clients(self, subscription_id):
-        if self.subscription:
-            self.resource_client = ResourceManagementClient(credentials, self.subscription_id)
-            self.storage_client = StorageManagementClient(credentials, self.subscription_id)
-            self.compute_client = ComputeManagementClient(credentials, self.subscription_id)
-            self.network_client = NetworkManagementClient(credentials, self.subscription_id)
+        if subscription_id:
+            self.resource_client = ResourceManagementClient(self.credentials, subscription_id)
+            self.storage_client = StorageManagementClient(self.credentials, subscription_id)
+            self.compute_client = ComputeManagementClient(self.credentials, subscription_id)
+            self.network_client = NetworkManagementClient(self.credentials, subscription_id)
         else:
             raise ValueError('No subscription specified, please check or create a new one') 
 
@@ -215,7 +215,7 @@ class azure_operations:
 
     def list_vhd_per_storage_account(self, resource_group, sa_ref, container):
         if sa_ref.kind == Kind.blob_storage:
-            logger.debug('Listing VHD operations will neglect Blob storage account.')
+            logger.debug('Listing VHD operations will neglect Blob storage account {}.',format(sa_ref.name))
             return
 
         account_key = self.list_storage_account_primary_key(sa_ref.name, resource_group)
@@ -266,7 +266,11 @@ class azure_operations:
         logger.info('CPU cores : {}'.format(vm_size_obj.number_of_cores))
         logger.info('Memory size : {} GB'.format(vm_size_obj.memory_in_mb/1024))
 
-        self.list_vm_state(resource_group, vm_obj.name)
+        state = self.list_vm_state(resource_group, vm_obj.name)
+        # For a failed VM, we do not scan its resources as they may not exist 
+        if 'failed' in state:
+            return
+
         self.list_vm_public_ip(resource_group, vm_obj.name)
         self.list_vm_private_ip(resource_group, vm_obj.name)
         # list disks
@@ -781,7 +785,7 @@ class azure_operations:
             raise ValueError('Either Password or SSH Public Key must be specified.')
         
         # size check
-        if not re.search('Standard_', vm_size) or not re.search('\d+T', vm_size):
+        if not re.search('Standard_', vm_size) and not re.search('\d+T', vm_size):
             raise ValueError('Please use either *T or Standard_* as vm size.')
         if (image and 'ddve' not in image.lower()) or publisher != 'dellemc' or offer != 'dell-emc-datadomain-virtual-edition' or 'Standard_' in vm_size:
             # check whether this size of VM exists in this location
