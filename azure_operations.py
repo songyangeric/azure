@@ -39,8 +39,8 @@ replication_types = ['Standard_LRS', 'Standard_GRS', 'Standard_RAGRS',
 access_tiers = ['Hot', 'Cool']
 
 class azure_operations:
-    def __init__(self, client_id, secret_key, tenant_id, subscription_id):
-        if client_id and secret_key and tenant_id and subscription_id:
+    def __init__(self, client_id, secret_key, tenant_id, subscription_id = None):
+        if client_id and secret_key and tenant_id:
             self.client_id = client_id
             self.secret_key = secret_key
             self.tenant_id = tenant_id
@@ -50,10 +50,14 @@ class azure_operations:
                 self.client_id = os.environ['AZURE_CLIENT_ID'] 
                 self.secret_key = os.environ['AZURE_SECRET_KEY'] 
                 self.tenant_id = os.environ['AZURE_TENANT_ID']
+            except Exception:
+                raise ValueError('Please set client_id and tenant_id and secret_key')
+
+            try: 
                 self.subscription_id = os.environ['AZURE_SUBSCRIPTION_ID']
             except Exception:
-                raise ValueError('Please set client_id and tenant_id and secret_key and sucscription_id')
-        
+                self.subscription_id = None 
+
         # initialize resouce and storage management object
         try:
             credentials = ServicePrincipalCredentials(
@@ -70,15 +74,18 @@ class azure_operations:
                     )
             self.inChina = True
 
-        if self.subscription_id is not None:
-            self.subscription_client = SubscriptionClient(credentials)
+        self.subscription_client = SubscriptionClient(credentials)
+        if self.subscription_id:
+            self.init_clients(self.subscription_id)
+
+    def init_clients(self, subscription_id):
+        if self.subscription:
             self.resource_client = ResourceManagementClient(credentials, self.subscription_id)
             self.storage_client = StorageManagementClient(credentials, self.subscription_id)
             self.compute_client = ComputeManagementClient(credentials, self.subscription_id)
             self.network_client = NetworkManagementClient(credentials, self.subscription_id)
         else:
             raise ValueError('No subscription specified, please check or create a new one') 
-
 
     def print_storage_account_info(self, sa):
         logger.info('')
