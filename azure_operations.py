@@ -284,6 +284,8 @@ class azure_operations:
             elif os_disk_ref.vhd:
                 disk_size_gb = self.get_disk_size(os_disk_ref.vhd.uri)
                 logger.info('  size : {} GiB'.format(disk_size_gb))
+            else:
+                logger.info('  size : None')
 
         data_disk_refs = vm_obj.storage_profile.data_disks
         if data_disk_refs:
@@ -297,6 +299,8 @@ class azure_operations:
                 elif data_disk_ref.vhd:
                     disk_size_gb = self.get_disk_size(data_disk_ref.vhd.uri)
                     logger.info('  size : {} GiB'.format(disk_size_gb))
+                else:
+                    logger.info('  size : None')
 
     def list_virtual_machines(self, resource_group, vmname = None, status = None):
         if vmname is None:

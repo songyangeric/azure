@@ -63,7 +63,7 @@ class delete_op:
                 logger.info('Unused VM: {}'.format(vm.name))
             else:
                 self.azure_ops.delete_vm(resource_group, vm.name)
-                logger.info('VM {} successfully deleted.'.format(vmi.name))
+                logger.info('VM {} successfully deleted.'.format(vm.name))
     
     def delete_unused_vhds(self, resource_group, delete = False):
 
