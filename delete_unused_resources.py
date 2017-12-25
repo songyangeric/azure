@@ -169,6 +169,14 @@ if __name__ == '__main__':
     parser.add_argument('--delete', action='store_true', help='delete resources from this group')
     parsed_args = parser.parse_args()
 
+    # First check whether environmental variables are set
+    try:
+        os.environ['AZURE_CLIENT_ID']
+        os.environ['AZURE_SECRET_KEY']
+        os.environ['AZURE_TENANT_ID']
+    except:
+        raise SystemError("Please set environmental variables for Service Principal first.")
+
     delete_ops = delete_op()
     # Get all subscriptions
     subscription_map = {}
